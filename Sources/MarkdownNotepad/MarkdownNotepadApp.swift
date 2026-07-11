@@ -223,10 +223,15 @@ final class MarkdownStore: ObservableObject {
 
     init(opening initialURL: URL? = nil) {
         if let session = Self.loadSession(), !session.tabs.isEmpty {
-            tabs = session.tabs
-            activeTabID = session.tabs.contains(where: { $0.id == session.activeTabID })
+            let restoredTabs = session.tabs.map { savedTab in
+                var tab = savedTab
+                tab.mode = .rendered
+                return tab
+            }
+            tabs = restoredTabs
+            activeTabID = restoredTabs.contains(where: { $0.id == session.activeTabID })
                 ? session.activeTabID
-                : session.tabs[0].id
+                : restoredTabs[0].id
             isAlwaysOnTop = session.isAlwaysOnTop
             isFullWidth = session.isFullWidth ?? true
         } else {
@@ -1087,6 +1092,7 @@ struct FloatingOutlineView: View {
         let outlineHeadings = isCollapsed ? [] : MarkdownOutlineParser.headings(in: markdown)
         VStack {
             HStack {
+                Spacer()
                 if isCollapsed {
                     Button {
                         isCollapsed = false
@@ -1106,7 +1112,7 @@ struct FloatingOutlineView: View {
                             Button {
                                 isCollapsed = true
                             } label: {
-                                Image(systemName: "chevron.left")
+                                Image(systemName: "chevron.right")
                             }
                             .buttonStyle(MinimalIconButtonStyle(size: 24))
                             .help("收起标题目录")
@@ -1153,15 +1159,14 @@ struct FloatingOutlineView: View {
                         }
                     }
                     .frame(width: 232)
-                    .background(.regularMaterial)
+                    .background(.ultraThinMaterial)
                     .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.75)
+                            .stroke(Color(nsColor: .separatorColor).opacity(0.22), lineWidth: 0.75)
                     }
-                    .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                    .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
                 }
-                Spacer()
             }
             Spacer()
         }
@@ -5337,10 +5342,12 @@ private enum MarkdownSelfTest {
             caretLocation: 17,
             scrollOffset: 180
         )
+        firstStore.mode = .source
         precondition(firstStore.activeTab?.isDirty == false, "Viewport changes must not mark document content dirty")
         firstStore.flushSession()
 
         let restoredStore = MarkdownStore()
+        precondition(restoredStore.mode == .rendered, "Every app launch should begin in rendered mode")
         precondition(
             restoredStore.viewport(for: .source) == EditorViewport(caretLocation: 42, scrollOffset: 320),
             "Source viewport should survive session restoration"
