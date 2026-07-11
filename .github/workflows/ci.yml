@@ -25,5 +25,8 @@ jobs:
       - name: Run self-tests
         run: swift run Madedown --self-test
 
+      - name: Check performance budgets
+        run: ./Scripts/check_performance_budget.sh
+
       - name: Audit open-source contents
         run: ./Scripts/audit_open_source.sh

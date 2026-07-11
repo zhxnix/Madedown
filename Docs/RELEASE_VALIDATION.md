@@ -7,12 +7,13 @@
 - `swift build`：通过
 - `swift build -c release`：通过
 - `swift run Madedown --self-test`：通过
+- `./Scripts/check_performance_budget.sh`：通过
 - `plutil -lint Packaging/Info.plist`：通过
 - `./Scripts/audit_open_source.sh`：通过
 - App ad-hoc 代码签名严格验证：通过
 - DMG 创建、挂载、App 存在性与签名验证：通过
 
-自测覆盖标题/列表/引用/代码/任务列表、GFM 表格、表格增删行列、图片附件渲染与 Markdown 往返、暂存图片保存迁移、H1–H6 目录解析、图片块空行稳定性、扩展 `/` 菜单格式、退格保留 `/`、多标签文件名和布局等行为。
+自测覆盖标题/列表/引用/代码/任务列表、GFM 表格、表格增删行列、图片附件渲染与 Markdown 往返、暂存图片保存迁移、剪贴板图片导入、H1–H6 目录解析、图片块空行稳定性、扩展 `/` 菜单格式、旧会话兼容、标签光标/滚动位置持久化，以及带本地图片的 HTML/PDF 导出等行为。
 
 ## 真实 macOS UI 验收
 
@@ -46,6 +47,7 @@
 本版本针对连续输入和图片文档做了以下验证：
 
 - 会话写入采用 350 ms 合并落盘，避免每次按键都编码并写入所有标签
+- CI 硬性限制 Release 可执行文件 8 MiB、App 包 12 MiB、启动探针 750 ms、启动 RSS 80 MiB
 - 富文本输入只重绘受影响行；粘贴多行时只处理粘贴覆盖的行范围
 - 本地图片由 ImageIO 直接生成目标尺寸缩略图
 - 图片缓存限制为最多 32 张、总成本不超过 32 MiB

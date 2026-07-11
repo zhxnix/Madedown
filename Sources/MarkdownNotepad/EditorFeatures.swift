@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import ImageIO
+import UniformTypeIdentifiers
 
 struct ImageInsertion: Equatable {
     let altText: String
@@ -238,11 +239,21 @@ final class MarkdownEditorCommandCenter {
         activeTextView.scrollRangeToVisible(targetRange)
         activeTextView.showFindIndicator(for: targetRange)
     }
+
+    func performFindAction(_ action: NSTextFinder.Action) {
+        guard let activeTextView else { return }
+        activeTextView.window?.makeFirstResponder(activeTextView)
+        let item = NSMenuItem()
+        item.tag = action.rawValue
+        activeTextView.performTextFinderAction(item)
+    }
 }
 
 @MainActor
 class SlashCommandTextView: NSTextView {
     var onSlashCommand: ((SlashCommand) -> Void)?
+    var onPasteImages: ((NSPasteboard) -> Bool)?
+    var onDropImageFiles: (([URL]) -> Bool)?
     private var slashMenuController: SlashCommandMenuController?
     var isSlashMenuPresented: Bool { slashMenuController != nil }
 
@@ -277,6 +288,28 @@ class SlashCommandTextView: NSTextView {
         showSlashMenu()
     }
 
+    override func paste(_ sender: Any?) {
+        if onPasteImages?(NSPasteboard.general) == true {
+            return
+        }
+        super.paste(sender)
+    }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        imageFileURLs(from: sender.draggingPasteboard).isEmpty ? super.draggingEntered(sender) : .copy
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let urls = imageFileURLs(from: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return super.performDragOperation(sender) }
+        let localPoint = convert(sender.draggingLocation, from: nil)
+        let insertionLocation = min(characterIndexForInsertion(at: localPoint), (string as NSString).length)
+        window?.makeFirstResponder(self)
+        setSelectedRange(NSRange(location: insertionLocation, length: 0))
+        MarkdownEditorCommandCenter.shared.activate(self)
+        return onDropImageFiles?(urls) == true
+    }
+
     override func keyDown(with event: NSEvent) {
         guard let menu = slashMenuController else {
             super.keyDown(with: event)
@@ -308,6 +341,8 @@ class SlashCommandTextView: NSTextView {
         super.viewDidMoveToWindow()
         if window == nil {
             dismissSlashMenu()
+        } else {
+            registerForDraggedTypes([.fileURL, .png, .tiff])
         }
     }
 
@@ -342,6 +377,17 @@ class SlashCommandTextView: NSTextView {
     private func dismissSlashMenu() {
         slashMenuController?.dismiss()
         slashMenuController = nil
+    }
+
+    private func imageFileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] ?? []
+        return urls.filter { url in
+            guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+            return type.conforms(to: .image)
+        }
     }
 }
 

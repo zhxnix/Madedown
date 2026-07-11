@@ -13,6 +13,12 @@ struct MadedownApp: App {
             MarkdownSelfTest.run()
             Foundation.exit(0)
         }
+        if CommandLine.arguments.contains("--startup-probe") {
+            let probeStore = MarkdownStore()
+            _ = probeStore.markdown
+            print("Madedown startup_probe=ready")
+            Foundation.exit(0)
+        }
         _store = StateObject(wrappedValue: MarkdownStore(opening: Self.launchDocumentURL()))
     }
 
@@ -43,6 +49,13 @@ struct MadedownApp: App {
                 .keyboardShortcut("o")
             }
 
+            CommandGroup(replacing: .printItem) {
+                Button("快速打开最近文件…") {
+                    store.presentQuickOpen()
+                }
+                .keyboardShortcut("p")
+            }
+
             CommandGroup(replacing: .saveItem) {
                 Button("保存") {
                     store.saveDocument()
@@ -53,6 +66,16 @@ struct MadedownApp: App {
                     store.saveDocumentAs()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("导出 HTML…") {
+                    store.exportHTML()
+                }
+
+                Button("导出 PDF…") {
+                    store.exportPDF()
+                }
             }
 
             CommandGroup(after: .pasteboard) {
@@ -60,6 +83,23 @@ struct MadedownApp: App {
                     store.insertImage()
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("查找与替换…") {
+                    MarkdownEditorCommandCenter.shared.performFindAction(.showFindInterface)
+                }
+                .keyboardShortcut("f")
+
+                Button("查找下一个") {
+                    MarkdownEditorCommandCenter.shared.performFindAction(.nextMatch)
+                }
+                .keyboardShortcut("g")
+
+                Button("查找上一个") {
+                    MarkdownEditorCommandCenter.shared.performFindAction(.previousMatch)
+                }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
             }
 
             CommandGroup(replacing: .help) {
@@ -105,6 +145,10 @@ struct MarkdownDocumentTab: Identifiable, Codable, Equatable {
     var untitledName: String
     var customTitle: String?
     var isDirty: Bool
+    var renderedCaretLocation: Int?
+    var renderedScrollOffset: Double?
+    var sourceCaretLocation: Int?
+    var sourceScrollOffset: Double?
 
     init(
         id: UUID = UUID(),
@@ -121,6 +165,10 @@ struct MarkdownDocumentTab: Identifiable, Codable, Equatable {
         self.untitledName = untitledName
         self.customTitle = nil
         self.isDirty = isDirty
+        self.renderedCaretLocation = nil
+        self.renderedScrollOffset = nil
+        self.sourceCaretLocation = nil
+        self.sourceScrollOffset = nil
     }
 
     var fileURL: URL? {
@@ -138,6 +186,11 @@ struct MarkdownDocumentTab: Identifiable, Codable, Equatable {
     }
 }
 
+struct EditorViewport: Equatable {
+    var caretLocation: Int
+    var scrollOffset: Double
+}
+
 @MainActor
 final class MarkdownStore: ObservableObject {
     @Published private(set) var tabs: [MarkdownDocumentTab]
@@ -150,6 +203,8 @@ final class MarkdownStore: ObservableObject {
     @Published var isFullWidth: Bool {
         didSet { persistSession() }
     }
+    @Published var isQuickOpenPresented = false
+    @Published private(set) var recentDocumentURLs: [URL] = []
 
     private struct Session: Codable {
         var version = 1
@@ -185,6 +240,7 @@ final class MarkdownStore: ObservableObject {
         if let initialURL {
             openDocument(at: initialURL)
         }
+        refreshRecentDocuments()
     }
 
     var markdown: String {
@@ -227,6 +283,46 @@ final class MarkdownStore: ObservableObject {
     func selectTab(_ id: UUID) {
         guard tabs.contains(where: { $0.id == id }) else { return }
         activeTabID = id
+    }
+
+    func viewport(for mode: EditorMode) -> EditorViewport {
+        guard let tab = activeTab else { return EditorViewport(caretLocation: 0, scrollOffset: 0) }
+        switch mode {
+        case .rendered:
+            return EditorViewport(
+                caretLocation: tab.renderedCaretLocation ?? 0,
+                scrollOffset: tab.renderedScrollOffset ?? 0
+            )
+        case .source:
+            return EditorViewport(
+                caretLocation: tab.sourceCaretLocation ?? 0,
+                scrollOffset: tab.sourceScrollOffset ?? 0
+            )
+        }
+    }
+
+    func updateViewport(tabID: UUID, mode: EditorMode, caretLocation: Int, scrollOffset: Double) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        let normalizedCaret = max(0, caretLocation)
+        let normalizedOffset = max(0, scrollOffset)
+        let previousCaret: Int?
+        let previousOffset: Double?
+
+        switch mode {
+        case .rendered:
+            previousCaret = tabs[index].renderedCaretLocation
+            previousOffset = tabs[index].renderedScrollOffset
+            guard previousCaret != normalizedCaret || abs((previousOffset ?? 0) - normalizedOffset) > 8 else { return }
+            tabs[index].renderedCaretLocation = normalizedCaret
+            tabs[index].renderedScrollOffset = normalizedOffset
+        case .source:
+            previousCaret = tabs[index].sourceCaretLocation
+            previousOffset = tabs[index].sourceScrollOffset
+            guard previousCaret != normalizedCaret || abs((previousOffset ?? 0) - normalizedOffset) > 8 else { return }
+            tabs[index].sourceCaretLocation = normalizedCaret
+            tabs[index].sourceScrollOffset = normalizedOffset
+        }
+        persistSession()
     }
 
     func requestCloseTab(_ id: UUID) {
@@ -296,6 +392,7 @@ final class MarkdownStore: ObservableObject {
         let standardizedURL = url.standardizedFileURL
         if let existing = tabs.first(where: { $0.fileURL?.standardizedFileURL == standardizedURL }) {
             activeTabID = existing.id
+            noteRecentDocument(standardizedURL)
             return
         }
 
@@ -316,6 +413,7 @@ final class MarkdownStore: ObservableObject {
             )
             tabs.append(tab)
             activeTabID = tab.id
+            noteRecentDocument(standardizedURL)
             persistSession()
         } catch {
             showAlert(title: "无法打开文件", message: error.localizedDescription)
@@ -330,6 +428,32 @@ final class MarkdownStore: ObservableObject {
         _ = saveActiveDocumentAs()
     }
 
+    func exportHTML() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.html]
+        panel.nameFieldStringValue = "\(exportBaseName).html"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try MarkdownExporter.writeHTML(markdown: markdown, baseURL: fileURL, to: url)
+        } catch {
+            showAlert(title: "无法导出 HTML", message: error.localizedDescription)
+        }
+    }
+
+    func exportPDF() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = "\(exportBaseName).pdf"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try MarkdownExporter.writePDF(markdown: markdown, baseURL: fileURL, to: url)
+        } catch {
+            showAlert(title: "无法导出 PDF", message: error.localizedDescription)
+        }
+    }
+
     func insertImage() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
@@ -342,17 +466,68 @@ final class MarkdownStore: ObservableObject {
 
         guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
 
+        _ = insertImageFiles([selectedURL])
+    }
+
+    func insertImageFiles(_ urls: [URL]) -> Bool {
+        let imageURLs = urls.filter { url in
+            guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+            return type.conforms(to: .image)
+        }
+        guard !imageURLs.isEmpty else { return false }
+
         do {
-            let insertion: ImageInsertion
-            if let documentURL = fileURL {
-                insertion = try Self.copyImageToAssetFolder(selectedURL, documentURL: documentURL)
-            } else {
-                insertion = try Self.stageImage(selectedURL, tabID: activeTabID)
+            for imageURL in imageURLs {
+                let insertion = try imageInsertion(for: imageURL)
+                MarkdownEditorCommandCenter.shared.insertImage(insertion, baseURL: fileURL)
             }
-            MarkdownEditorCommandCenter.shared.insertImage(insertion, baseURL: fileURL)
+            return true
         } catch {
             showAlert(title: "无法插入图片", message: error.localizedDescription)
+            return true
         }
+    }
+
+    func insertImages(from pasteboard: NSPasteboard) -> Bool {
+        let fileURLs = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] ?? []
+        if insertImageFiles(fileURLs) {
+            return true
+        }
+
+        guard let image = NSImage(pasteboard: pasteboard),
+              let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmap.representation(using: .png, properties: [:]) else {
+            return false
+        }
+
+        let temporaryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("madedown-pasted-\(UUID().uuidString).png")
+        do {
+            try pngData.write(to: temporaryURL, options: .atomic)
+            defer { try? FileManager.default.removeItem(at: temporaryURL) }
+            return insertImageFiles([temporaryURL])
+        } catch {
+            showAlert(title: "无法粘贴图片", message: error.localizedDescription)
+            return true
+        }
+    }
+
+    func presentQuickOpen() {
+        refreshRecentDocuments()
+        isQuickOpenPresented = true
+    }
+
+    func dismissQuickOpen() {
+        isQuickOpenPresented = false
+    }
+
+    func openRecentDocument(_ url: URL) {
+        isQuickOpenPresented = false
+        openDocument(at: url)
     }
 
     private func saveActiveDocument() -> Bool {
@@ -405,6 +580,7 @@ final class MarkdownStore: ObservableObject {
             tabs[savedIndex].filePath = url.standardizedFileURL.path
             tabs[savedIndex].isDirty = false
             try? FileManager.default.removeItem(at: Self.stagedAssetsDirectory(for: tabID))
+            noteRecentDocument(url.standardizedFileURL)
             persistSession()
             return true
         } catch {
@@ -437,6 +613,30 @@ final class MarkdownStore: ObservableObject {
             number += 1
         }
         return "未命名 \(number)"
+    }
+
+    private func imageInsertion(for sourceURL: URL) throws -> ImageInsertion {
+        if let documentURL = fileURL {
+            return try Self.copyImageToAssetFolder(sourceURL, documentURL: documentURL)
+        }
+        return try Self.stageImage(sourceURL, tabID: activeTabID)
+    }
+
+    private var exportBaseName: String {
+        let filename = activeTab?.suggestedSaveFilename ?? "未命名.md"
+        let base = (filename as NSString).deletingPathExtension
+        return base.isEmpty ? "未命名" : base
+    }
+
+    private func noteRecentDocument(_ url: URL) {
+        NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        refreshRecentDocuments()
+    }
+
+    private func refreshRecentDocuments() {
+        recentDocumentURLs = NSDocumentController.shared.recentDocumentURLs.filter {
+            FileManager.default.fileExists(atPath: $0.path)
+        }
     }
 
     func flushSession() {
@@ -587,6 +787,132 @@ final class MarkdownStore: ObservableObject {
     }
 }
 
+@MainActor
+enum MarkdownExporter {
+    static func writeHTML(markdown: String, baseURL: URL?, to destination: URL) throws {
+        let body = embedLocalImages(in: HTMLFormatter.format(markdown), baseURL: baseURL)
+        let html = """
+        <!doctype html>
+        <html lang="zh-CN">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>\(escapedHTML(destination.deletingPathExtension().lastPathComponent))</title>
+          <style>
+            :root { color-scheme: light dark; }
+            body { max-width: 860px; margin: 48px auto; padding: 0 24px; font: 16px/1.7 -apple-system, BlinkMacSystemFont, sans-serif; }
+            h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin-top: 1.5em; }
+            img { max-width: 100%; height: auto; border-radius: 8px; }
+            pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+            pre { overflow-x: auto; padding: 14px; background: color-mix(in srgb, CanvasText 7%, Canvas); border-radius: 8px; }
+            blockquote { margin-left: 0; padding-left: 16px; border-left: 3px solid #8888; color: color-mix(in srgb, CanvasText 72%, Canvas); }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #8886; padding: 7px 10px; text-align: left; }
+          </style>
+        </head>
+        <body>
+        \(body)
+        </body>
+        </html>
+        """
+        try Data(html.utf8).write(to: destination, options: .atomic)
+    }
+
+    static func writePDF(markdown: String, baseURL: URL?, to destination: URL) throws {
+        let attributed = MarkdownRichText.attributedDocument(markdown: markdown, baseURL: baseURL)
+        let printInfo = NSPrintInfo()
+        printInfo.paperSize = NSSize(width: 595, height: 842)
+        printInfo.leftMargin = 42
+        printInfo.rightMargin = 42
+        printInfo.topMargin = 46
+        printInfo.bottomMargin = 46
+        printInfo.horizontalPagination = .fit
+        printInfo.verticalPagination = .automatic
+
+        let contentWidth = printInfo.paperSize.width - printInfo.leftMargin - printInfo.rightMargin
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 100))
+        textView.appearance = NSAppearance(named: .aqua)
+        textView.isRichText = true
+        textView.drawsBackground = true
+        textView.backgroundColor = .white
+        textView.textColor = .black
+        textView.textContainerInset = NSSize(width: 0, height: 0)
+        textView.textContainer?.containerSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = false
+        textView.textStorage?.setAttributedString(attributed)
+
+        if let layoutManager = textView.layoutManager,
+           let textContainer = textView.textContainer {
+            layoutManager.ensureLayout(for: textContainer)
+            let usedHeight = layoutManager.usedRect(for: textContainer).height
+            textView.frame = NSRect(x: 0, y: 0, width: contentWidth, height: max(100, usedHeight))
+        }
+
+        let pdfData = NSMutableData()
+        let operation = NSPrintOperation.pdfOperation(
+            with: textView,
+            inside: textView.bounds,
+            to: pdfData,
+            printInfo: printInfo
+        )
+        operation.showsPrintPanel = false
+        operation.showsProgressPanel = false
+        guard operation.run() else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try (pdfData as Data).write(to: destination, options: .atomic)
+    }
+
+    private static func embedLocalImages(in html: String, baseURL: URL?) -> String {
+        guard let expression = try? NSRegularExpression(pattern: #"(<img\b[^>]*\bsrc=")([^"]+)(")"#) else {
+            return html
+        }
+        let source = html as NSString
+        var result = html
+        let matches = expression.matches(
+            in: html,
+            range: NSRange(location: 0, length: source.length)
+        )
+
+        for match in matches.reversed() {
+            let valueRange = match.range(at: 2)
+            let imageSource = source.substring(with: valueRange)
+            guard let imageURL = resolvedLocalURL(imageSource, baseURL: baseURL),
+                  let data = try? Data(contentsOf: imageURL) else {
+                continue
+            }
+            let mimeType = UTType(filenameExtension: imageURL.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+            let dataURL = "data:\(mimeType);base64,\(data.base64EncodedString())"
+            guard let swiftRange = Range(valueRange, in: result) else { continue }
+            result.replaceSubrange(swiftRange, with: dataURL)
+        }
+        return result
+    }
+
+    private static func resolvedLocalURL(_ source: String, baseURL: URL?) -> URL? {
+        let decoded = source.removingPercentEncoding ?? source
+        if let url = URL(string: decoded), url.isFileURL {
+            return url
+        }
+        if decoded.hasPrefix("/") {
+            return URL(fileURLWithPath: decoded)
+        }
+        guard let baseURL else { return nil }
+        return URL(
+            fileURLWithPath: decoded,
+            relativeTo: baseURL.deletingLastPathComponent()
+        ).standardizedFileURL
+    }
+
+    private static func escapedHTML(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+}
+
 struct EditorView: View {
     @EnvironmentObject private var store: MarkdownStore
     @FocusState private var sourceFocused: Bool
@@ -599,17 +925,31 @@ struct EditorView: View {
 
             ZStack {
                 if store.mode == .rendered {
+                    let viewport = store.viewport(for: .rendered)
                     RenderedMarkdownEditor(
                         text: $store.markdown,
+                        tabID: store.activeTabID,
                         isFullWidth: store.isFullWidth,
                         documentURL: store.fileURL,
-                        onRequestImage: store.insertImage
+                        caretLocation: viewport.caretLocation,
+                        scrollOffset: viewport.scrollOffset,
+                        onRequestImage: store.insertImage,
+                        onPasteImages: store.insertImages,
+                        onDropImageFiles: store.insertImageFiles,
+                        onViewportChange: store.updateViewport
                     )
                 } else {
+                    let viewport = store.viewport(for: .source)
                     SourceEditor(
                         text: $store.markdown,
+                        tabID: store.activeTabID,
                         isFullWidth: store.isFullWidth,
-                        onRequestImage: store.insertImage
+                        caretLocation: viewport.caretLocation,
+                        scrollOffset: viewport.scrollOffset,
+                        onRequestImage: store.insertImage,
+                        onPasteImages: store.insertImages,
+                        onDropImageFiles: store.insertImageFiles,
+                        onViewportChange: store.updateViewport
                     )
                         .focused($sourceFocused)
                 }
@@ -633,6 +973,109 @@ struct EditorView: View {
         .onChange(of: store.mode) { newMode in
             sourceFocused = newMode == .source
         }
+        .sheet(isPresented: $store.isQuickOpenPresented) {
+            QuickOpenView()
+                .environmentObject(store)
+        }
+    }
+}
+
+struct QuickOpenView: View {
+    @EnvironmentObject private var store: MarkdownStore
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
+
+    private var filteredURLs: [URL] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return store.recentDocumentURLs }
+        return store.recentDocumentURLs.filter {
+            $0.lastPathComponent.localizedCaseInsensitiveContains(trimmed) ||
+                $0.deletingLastPathComponent().path.localizedCaseInsensitiveContains(trimmed)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("搜索最近打开的 Markdown 文件", text: $query)
+                    .textFieldStyle(.plain)
+                    .focused($searchFocused)
+                Button {
+                    store.dismissQuickOpen()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(MinimalIconButtonStyle(size: 24))
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 42)
+
+            Divider()
+
+            if filteredURLs.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.tertiary)
+                    Text(query.isEmpty ? "还没有最近文件" : "没有匹配的最近文件")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(filteredURLs, id: \.path) { url in
+                            Button {
+                                store.openRecentDocument(url)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "doc.text")
+                                        .foregroundStyle(.secondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(url.lastPathComponent)
+                                            .font(.system(size: 13, weight: .medium))
+                                            .lineLimit(1)
+                                        Text(url.deletingLastPathComponent().path)
+                                            .font(.system(size: 10.5))
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 10)
+                                .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(6)
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Text("⌘P")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button("浏览其他文件…") {
+                    store.dismissQuickOpen()
+                    DispatchQueue.main.async {
+                        store.openDocument()
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+        }
+        .frame(width: 520, height: 420)
+        .onAppear { searchFocused = true }
+        .onExitCommand { store.dismissQuickOpen() }
     }
 }
 
@@ -1448,8 +1891,14 @@ final class SourceMarkdownTextView: SlashCommandTextView {
 
 struct SourceEditor: NSViewRepresentable {
     @Binding var text: String
+    var tabID: UUID
     var isFullWidth = true
+    var caretLocation = 0
+    var scrollOffset = 0.0
     var onRequestImage: () -> Void = {}
+    var onPasteImages: (NSPasteboard) -> Bool = { _ in false }
+    var onDropImageFiles: ([URL]) -> Bool = { _ in false }
+    var onViewportChange: (UUID, EditorMode, Int, Double) -> Void = { _, _, _, _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -1469,10 +1918,18 @@ struct SourceEditor: NSViewRepresentable {
         textView.onSlashCommand = { [weak coordinator = context.coordinator] command in
             coordinator?.applySlashCommand(command)
         }
+        textView.onPasteImages = { [weak coordinator = context.coordinator] pasteboard in
+            coordinator?.parent.onPasteImages(pasteboard) ?? false
+        }
+        textView.onDropImageFiles = { [weak coordinator = context.coordinator] urls in
+            coordinator?.parent.onDropImageFiles(urls) ?? false
+        }
         textView.isEditable = true
         textView.isSelectable = true
         textView.allowsUndo = true
         textView.isRichText = false
+        textView.usesFindBar = true
+        textView.isIncrementalSearchingEnabled = true
         textView.drawsBackground = false
         textView.font = .monospacedSystemFont(ofSize: 14.5, weight: .regular)
         textView.textColor = .labelColor
@@ -1499,7 +1956,10 @@ struct SourceEditor: NSViewRepresentable {
         ]
         textView.string = text
         context.coordinator.lastText = text
+        context.coordinator.lastTabID = tabID
         scrollView.documentView = textView
+        context.coordinator.observeScrollView(scrollView)
+        context.coordinator.restoreViewport(in: scrollView)
         MarkdownEditorCommandCenter.shared.activate(textView)
         return scrollView
     }
@@ -1511,29 +1971,81 @@ struct SourceEditor: NSViewRepresentable {
         }
         textView.usesFullWidth = isFullWidth
         MarkdownEditorCommandCenter.shared.activate(textView)
-        guard context.coordinator.lastText != text else {
+        let tabChanged = context.coordinator.lastTabID != tabID
+        guard tabChanged || context.coordinator.lastText != text else {
             return
         }
 
         context.coordinator.isApplyingChange = true
-        let selection = textView.selectedRange()
+        let selectionLocation = tabChanged ? caretLocation : textView.selectedRange().location
         textView.string = text
         textView.setSelectedRange(
-            NSRange(location: min(selection.location, (text as NSString).length), length: 0)
+            NSRange(location: min(selectionLocation, (text as NSString).length), length: 0)
         )
         context.coordinator.lastText = text
+        context.coordinator.lastTabID = tabID
         context.coordinator.isApplyingChange = false
+        if tabChanged {
+            context.coordinator.restoreViewport(in: scrollView)
+        }
     }
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: SourceEditor
         weak var textView: SourceMarkdownTextView?
+        weak var scrollView: NSScrollView?
         var lastText = ""
+        var lastTabID: UUID?
         var isApplyingChange = false
 
         init(_ parent: SourceEditor) {
             self.parent = parent
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+
+        func observeScrollView(_ scrollView: NSScrollView) {
+            self.scrollView = scrollView
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(clipViewBoundsChanged),
+                name: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView
+            )
+        }
+
+        func restoreViewport(in scrollView: NSScrollView) {
+            guard let textView else { return }
+            isApplyingChange = true
+            textView.setSelectedRange(NSRange(
+                location: min(parent.caretLocation, (textView.string as NSString).length),
+                length: 0
+            ))
+            isApplyingChange = false
+            let y = max(0, parent.scrollOffset)
+            DispatchQueue.main.async { [weak scrollView] in
+                guard let scrollView else { return }
+                scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+        }
+
+        @objc private func clipViewBoundsChanged() {
+            reportViewport()
+        }
+
+        private func reportViewport() {
+            guard !isApplyingChange, let textView, let scrollView else { return }
+            parent.onViewportChange(
+                parent.tabID,
+                .source,
+                textView.selectedRange().location,
+                Double(scrollView.contentView.bounds.minY)
+            )
         }
 
         func textView(
@@ -1578,6 +2090,11 @@ struct SourceEditor: NSViewRepresentable {
             }
             lastText = textView.string
             parent.text = textView.string
+            reportViewport()
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            reportViewport()
         }
 
         func applySlashCommand(_ command: SlashCommand) {
@@ -1852,9 +2369,15 @@ final class MarkdownTextView: SlashCommandTextView {
 
 struct RenderedMarkdownEditor: NSViewRepresentable {
     @Binding var text: String
+    var tabID: UUID
     var isFullWidth = true
     var documentURL: URL? = nil
+    var caretLocation = 0
+    var scrollOffset = 0.0
     var onRequestImage: () -> Void = {}
+    var onPasteImages: (NSPasteboard) -> Bool = { _ in false }
+    var onDropImageFiles: ([URL]) -> Bool = { _ in false }
+    var onViewportChange: (UUID, EditorMode, Int, Double) -> Void = { _, _, _, _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -1873,10 +2396,18 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
         textView.onSlashCommand = { [weak coordinator = context.coordinator] command in
             coordinator?.applySlashCommand(command)
         }
+        textView.onPasteImages = { [weak coordinator = context.coordinator] pasteboard in
+            coordinator?.parent.onPasteImages(pasteboard) ?? false
+        }
+        textView.onDropImageFiles = { [weak coordinator = context.coordinator] urls in
+            coordinator?.parent.onDropImageFiles(urls) ?? false
+        }
         textView.isEditable = true
         textView.isSelectable = true
         textView.allowsUndo = true
         textView.isRichText = true
+        textView.usesFindBar = true
+        textView.isIncrementalSearchingEnabled = true
         textView.importsGraphics = false
         textView.drawsBackground = false
         textView.usesFontPanel = false
@@ -1916,10 +2447,13 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
         MarkdownEditorCommandCenter.shared.activate(textView)
         context.coordinator.lastMarkdown = text
         context.coordinator.lastDocumentURL = documentURL
+        context.coordinator.lastTabID = tabID
         MarkdownRichText.load(markdown: text, baseURL: documentURL, into: textView)
         context.coordinator.updateEdgeControls()
 
         scrollView.documentView = textView
+        context.coordinator.observeScrollView(scrollView)
+        context.coordinator.restoreViewport(in: scrollView)
         return scrollView
     }
 
@@ -1929,15 +2463,20 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
         textView.usesFullWidth = isFullWidth
         MarkdownEditorCommandCenter.shared.activate(textView)
 
+        let tabChanged = context.coordinator.lastTabID != tabID
         let documentChanged = context.coordinator.lastDocumentURL?.standardizedFileURL != documentURL?.standardizedFileURL
         if !context.coordinator.isApplyingChange,
-           context.coordinator.lastMarkdown != text || documentChanged {
+           context.coordinator.lastMarkdown != text || documentChanged || tabChanged {
             context.coordinator.isApplyingStyle = true
             context.coordinator.lastMarkdown = text
             context.coordinator.lastDocumentURL = documentURL
+            context.coordinator.lastTabID = tabID
             MarkdownRichText.load(markdown: text, baseURL: documentURL, into: textView)
             context.coordinator.isApplyingStyle = false
             context.coordinator.updateEdgeControls()
+            if tabChanged {
+                context.coordinator.restoreViewport(in: scrollView)
+            }
         }
     }
 
@@ -1952,10 +2491,57 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
         var isApplyingChange = false
         var lastMarkdown = ""
         var lastDocumentURL: URL?
+        var lastTabID: UUID?
+        weak var scrollView: NSScrollView?
         private var pendingEditedRange: NSRange?
 
         init(_ parent: RenderedMarkdownEditor) {
             self.parent = parent
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+
+        func observeScrollView(_ scrollView: NSScrollView) {
+            self.scrollView = scrollView
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(clipViewBoundsChanged),
+                name: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView
+            )
+        }
+
+        func restoreViewport(in scrollView: NSScrollView) {
+            guard let textView else { return }
+            isApplyingStyle = true
+            textView.setSelectedRange(NSRange(
+                location: min(parent.caretLocation, textView.textStorage?.length ?? 0),
+                length: 0
+            ))
+            isApplyingStyle = false
+            let y = max(0, parent.scrollOffset)
+            DispatchQueue.main.async { [weak scrollView] in
+                guard let scrollView else { return }
+                scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+        }
+
+        @objc private func clipViewBoundsChanged() {
+            reportViewport()
+        }
+
+        private func reportViewport() {
+            guard !isApplyingStyle, !isApplyingChange, let textView, let scrollView else { return }
+            parent.onViewportChange(
+                parent.tabID,
+                .rendered,
+                textView.selectedRange().location,
+                Double(scrollView.contentView.bounds.minY)
+            )
         }
 
         func installEdgeControls(in textView: NSTextView) {
@@ -2223,12 +2809,14 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
             isApplyingStyle = false
             TableCommandCenter.shared.updateContext(from: textView)
             updateEdgeControls()
+            reportViewport()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             TableCommandCenter.shared.updateContext(from: textView)
             updateEdgeControls()
+            reportViewport()
         }
     }
 }
@@ -2313,6 +2901,12 @@ enum MarkdownRichText {
         textView.textStorage?.setAttributedString(attributed)
         applyDisplayStyles(to: textView)
         refreshTypingAttributes(in: textView)
+    }
+
+    static func attributedDocument(markdown: String, baseURL: URL? = nil) -> NSAttributedString {
+        let textView = NSTextView()
+        load(markdown: markdown, baseURL: baseURL, into: textView)
+        return NSAttributedString(attributedString: textView.attributedString())
     }
 
     static func consumeMarkdownShortcuts(
@@ -4576,6 +5170,10 @@ private enum MarkdownSelfTest {
         testLocalImageRendersAndRoundTrips()
         testInsertedImageUsesOwnParagraph()
         testStagedImagesMaterializeOnSave()
+        testClipboardImageInsertion()
+        testSessionTabBackwardCompatibility()
+        testViewportSessionPersistence()
+        testDocumentExport()
         testHeadingReturnResetsToParagraph()
         testUnorderedListReturnContinuesMarker()
         testOrderedListReturnIncrementsMarker()
@@ -4672,6 +5270,109 @@ private enum MarkdownSelfTest {
             manager.fileExists(atPath: root.appendingPathComponent("draft.assets/sample-image.png").path),
             "Saving should copy staged images beside the Markdown document"
         )
+    }
+
+    private static func testClipboardImageInsertion() {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let sessionURL = root.appendingPathComponent("session.json")
+        try! manager.createDirectory(at: root, withIntermediateDirectories: true)
+        setenv("MADEDOWN_SESSION_PATH", sessionURL.path, 1)
+        defer {
+            unsetenv("MADEDOWN_SESSION_PATH")
+            try? manager.removeItem(at: root)
+        }
+
+        let pngData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!
+        let pasteboard = NSPasteboard.withUniqueName()
+        pasteboard.clearContents()
+        pasteboard.setData(pngData, forType: .png)
+
+        let store = MarkdownStore()
+        let textView = SourceMarkdownTextView()
+        MarkdownEditorCommandCenter.shared.activate(textView)
+        precondition(store.insertImages(from: pasteboard), "Image pasteboard content should be handled")
+        precondition(
+            textView.string.contains("![madedown-pasted-") && textView.string.contains("file://"),
+            "Pasted images should be inserted immediately through the staged attachment flow"
+        )
+    }
+
+    private static func testSessionTabBackwardCompatibility() {
+        let legacyJSON = """
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "markdown": "# Legacy",
+          "mode": "source",
+          "untitledName": "未命名",
+          "isDirty": false
+        }
+        """
+        let decoded = try! JSONDecoder().decode(MarkdownDocumentTab.self, from: Data(legacyJSON.utf8))
+        precondition(decoded.sourceCaretLocation == nil, "Older sessions should decode without viewport fields")
+        precondition(decoded.markdown == "# Legacy", "Older session content should remain intact")
+    }
+
+    private static func testViewportSessionPersistence() {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let sessionURL = root.appendingPathComponent("session.json")
+        try! manager.createDirectory(at: root, withIntermediateDirectories: true)
+        setenv("MADEDOWN_SESSION_PATH", sessionURL.path, 1)
+        defer {
+            unsetenv("MADEDOWN_SESSION_PATH")
+            try? manager.removeItem(at: root)
+        }
+
+        let firstStore = MarkdownStore()
+        firstStore.updateViewport(
+            tabID: firstStore.activeTabID,
+            mode: .source,
+            caretLocation: 42,
+            scrollOffset: 320
+        )
+        firstStore.updateViewport(
+            tabID: firstStore.activeTabID,
+            mode: .rendered,
+            caretLocation: 17,
+            scrollOffset: 180
+        )
+        precondition(firstStore.activeTab?.isDirty == false, "Viewport changes must not mark document content dirty")
+        firstStore.flushSession()
+
+        let restoredStore = MarkdownStore()
+        precondition(
+            restoredStore.viewport(for: .source) == EditorViewport(caretLocation: 42, scrollOffset: 320),
+            "Source viewport should survive session restoration"
+        )
+        precondition(
+            restoredStore.viewport(for: .rendered) == EditorViewport(caretLocation: 17, scrollOffset: 180),
+            "Rendered viewport should survive session restoration"
+        )
+    }
+
+    private static func testDocumentExport() {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let htmlURL = root.appendingPathComponent("export.html")
+        let pdfURL = root.appendingPathComponent("export.pdf")
+        let imageURL = root.appendingPathComponent("image.png")
+        let documentURL = root.appendingPathComponent("document.md")
+        try! manager.createDirectory(at: root, withIntermediateDirectories: true)
+        try! Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!.write(to: imageURL)
+        defer { try? manager.removeItem(at: root) }
+
+        let markdown = "# 导出标题\n\n正文与 **粗体**。\n\n![图片](image.png)"
+        try! MarkdownExporter.writeHTML(markdown: markdown, baseURL: documentURL, to: htmlURL)
+        try! MarkdownExporter.writePDF(markdown: markdown, baseURL: documentURL, to: pdfURL)
+        let html = try! String(contentsOf: htmlURL, encoding: .utf8)
+        let pdf = try! Data(contentsOf: pdfURL)
+        precondition(html.localizedCaseInsensitiveContains("<html"), "HTML export should produce a complete document")
+        precondition(html.contains("导出标题"), "HTML export should preserve document text")
+        precondition(html.localizedCaseInsensitiveContains("<img"), "HTML export should preserve rendered images")
+        precondition(html.contains("data:image/png;base64,"), "HTML export should embed local images for portability")
+        precondition(pdf.starts(with: Data("%PDF".utf8)), "PDF export should produce a valid PDF header")
+        precondition(pdf.count > 1_000, "PDF export should contain rendered document content")
     }
 
     private static func testSlashBackspaceKeepsLiteralSlash() {
@@ -5134,7 +5835,9 @@ private enum MarkdownSelfTest {
             get: { markdown },
             set: { markdown = $0 }
         )
-        let coordinator = RenderedMarkdownEditor.Coordinator(RenderedMarkdownEditor(text: binding))
+        let coordinator = RenderedMarkdownEditor.Coordinator(
+            RenderedMarkdownEditor(text: binding, tabID: UUID())
+        )
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
         textView.textContainer?.containerSize = NSSize(width: 640, height: CGFloat.greatestFiniteMagnitude)
 
