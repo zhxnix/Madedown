@@ -269,6 +269,7 @@ final class MarkdownStore: ObservableObject {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let wasActive = activeTabID == id
         tabs.remove(at: index)
+        try? FileManager.default.removeItem(at: Self.stagedAssetsDirectory(for: id))
 
         if tabs.isEmpty {
             let tab = MarkdownDocumentTab()
@@ -330,23 +331,25 @@ final class MarkdownStore: ObservableObject {
     }
 
     func insertImage() {
-        if fileURL == nil, !saveActiveDocumentAs() {
-            return
-        }
-        guard let documentURL = fileURL else { return }
-
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.message = "选择一张图片。Madedown 会将副本保存到 Markdown 文件旁的附件目录。"
+        panel.message = fileURL == nil
+            ? "选择一张图片。无需先保存文档，首次保存时会自动整理到附件目录。"
+            : "选择一张图片。Madedown 会将副本保存到 Markdown 文件旁的附件目录。"
 
         guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
 
         do {
-            let insertion = try copyImageToAssetFolder(selectedURL, documentURL: documentURL)
-            MarkdownEditorCommandCenter.shared.insertImage(insertion, baseURL: documentURL)
+            let insertion: ImageInsertion
+            if let documentURL = fileURL {
+                insertion = try Self.copyImageToAssetFolder(selectedURL, documentURL: documentURL)
+            } else {
+                insertion = try Self.stageImage(selectedURL, tabID: activeTabID)
+            }
+            MarkdownEditorCommandCenter.shared.insertImage(insertion, baseURL: fileURL)
         } catch {
             showAlert(title: "无法插入图片", message: error.localizedDescription)
         }
@@ -391,10 +394,17 @@ final class MarkdownStore: ObservableObject {
         guard let index = activeTabIndex else { return false }
         let tabID = tabs[index].id
         do {
-            try tabs[index].markdown.write(to: url, atomically: true, encoding: .utf8)
+            let preparedMarkdown = try Self.materializeStagedImages(
+                in: tabs[index].markdown,
+                tabID: tabID,
+                documentURL: url
+            )
+            try preparedMarkdown.write(to: url, atomically: true, encoding: .utf8)
             guard let savedIndex = tabs.firstIndex(where: { $0.id == tabID }) else { return false }
+            tabs[savedIndex].markdown = preparedMarkdown
             tabs[savedIndex].filePath = url.standardizedFileURL.path
             tabs[savedIndex].isDirty = false
+            try? FileManager.default.removeItem(at: Self.stagedAssetsDirectory(for: tabID))
             persistSession()
             return true
         } catch {
@@ -466,26 +476,67 @@ final class MarkdownStore: ObservableObject {
         }
     }
 
-    private func copyImageToAssetFolder(_ sourceURL: URL, documentURL: URL) throws -> ImageInsertion {
-        let manager = FileManager.default
+    private static func copyImageToAssetFolder(_ sourceURL: URL, documentURL: URL) throws -> ImageInsertion {
         let documentName = documentURL.deletingPathExtension().lastPathComponent
         let assetsDirectory = documentURL.deletingLastPathComponent()
             .appendingPathComponent("\(documentName).assets", isDirectory: true)
-        try manager.createDirectory(at: assetsDirectory, withIntermediateDirectories: true)
+        let destination = try copyImage(sourceURL, to: assetsDirectory)
+        let relativePath = "\(assetsDirectory.lastPathComponent)/\(destination.lastPathComponent)"
+        let encodedPath = relativePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? relativePath
+        return ImageInsertion(altText: imageBaseName(for: sourceURL), source: encodedPath)
+    }
 
-        let originalBaseName = sourceURL.deletingPathExtension().lastPathComponent
-        let cleanedBaseName = originalBaseName
-            .replacingOccurrences(of: #"[^\p{L}\p{N}._-]+"#, with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-._"))
-        let baseName = cleanedBaseName.isEmpty ? "image" : cleanedBaseName
+    fileprivate static func stageImage(_ sourceURL: URL, tabID: UUID) throws -> ImageInsertion {
+        let destination = try copyImage(sourceURL, to: Self.stagedAssetsDirectory(for: tabID))
+        return ImageInsertion(
+            altText: imageBaseName(for: sourceURL),
+            source: destination.absoluteURL.absoluteString
+        )
+    }
+
+    fileprivate static func materializeStagedImages(
+        in markdown: String,
+        tabID: UUID,
+        documentURL: URL
+    ) throws -> String {
+        let manager = FileManager.default
+        let stagingDirectory = Self.stagedAssetsDirectory(for: tabID)
+        guard manager.fileExists(atPath: stagingDirectory.path) else { return markdown }
+
+        let documentName = documentURL.deletingPathExtension().lastPathComponent
+        let assetsDirectory = documentURL.deletingLastPathComponent()
+            .appendingPathComponent("\(documentName).assets", isDirectory: true)
+        let stagedFiles = try manager.contentsOfDirectory(
+            at: stagingDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+
+        var result = markdown
+        for stagedFile in stagedFiles {
+            let stagedSource = stagedFile.absoluteURL.absoluteString
+            guard result.contains(stagedSource) else { continue }
+            let destination = try copyImage(stagedFile, to: assetsDirectory)
+            let relativePath = "\(assetsDirectory.lastPathComponent)/\(destination.lastPathComponent)"
+            let encodedPath = relativePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? relativePath
+            result = result.replacingOccurrences(of: stagedSource, with: encodedPath)
+        }
+        return result
+    }
+
+    private static func copyImage(_ sourceURL: URL, to directory: URL) throws -> URL {
+        let manager = FileManager.default
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let baseName = imageBaseName(for: sourceURL)
         let pathExtension = sourceURL.pathExtension.lowercased()
 
-        var destination = assetsDirectory.appendingPathComponent(
+        var destination = directory.appendingPathComponent(
             pathExtension.isEmpty ? baseName : "\(baseName).\(pathExtension)"
         )
         var suffix = 2
         while manager.fileExists(atPath: destination.path) {
-            destination = assetsDirectory.appendingPathComponent(
+            destination = directory.appendingPathComponent(
                 pathExtension.isEmpty ? "\(baseName)-\(suffix)" : "\(baseName)-\(suffix).\(pathExtension)"
             )
             suffix += 1
@@ -494,10 +545,21 @@ final class MarkdownStore: ObservableObject {
         if sourceURL.standardizedFileURL != destination.standardizedFileURL {
             try manager.copyItem(at: sourceURL, to: destination)
         }
+        return destination
+    }
 
-        let relativePath = "\(assetsDirectory.lastPathComponent)/\(destination.lastPathComponent)"
-        let encodedPath = relativePath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? relativePath
-        return ImageInsertion(altText: baseName, source: encodedPath)
+    private static func imageBaseName(for sourceURL: URL) -> String {
+        let originalBaseName = sourceURL.deletingPathExtension().lastPathComponent
+        let cleanedBaseName = originalBaseName
+            .replacingOccurrences(of: #"[^\p{L}\p{N}._-]+"#, with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-._"))
+        return cleanedBaseName.isEmpty ? "image" : cleanedBaseName
+    }
+
+    private static func stagedAssetsDirectory(for tabID: UUID) -> URL {
+        sessionURL.deletingLastPathComponent()
+            .appendingPathComponent("StagedAssets", isDirectory: true)
+            .appendingPathComponent(tabID.uuidString, isDirectory: true)
     }
 
     private static func loadSession() -> Session? {
@@ -528,6 +590,7 @@ final class MarkdownStore: ObservableObject {
 struct EditorView: View {
     @EnvironmentObject private var store: MarkdownStore
     @FocusState private var sourceFocused: Bool
+    @State private var isOutlineCollapsed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -542,21 +605,21 @@ struct EditorView: View {
                         documentURL: store.fileURL,
                         onRequestImage: store.insertImage
                     )
-                        .id("rendered-\(store.activeTabID.uuidString)")
-                        .transition(.opacity)
                 } else {
                     SourceEditor(
                         text: $store.markdown,
                         isFullWidth: store.isFullWidth,
                         onRequestImage: store.insertImage
                     )
-                        .id("source-\(store.activeTabID.uuidString)")
                         .focused($sourceFocused)
-                        .transition(.opacity)
                 }
+
+                FloatingOutlineView(
+                    markdown: store.markdown,
+                    isCollapsed: $isOutlineCollapsed
+                )
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .animation(.easeInOut(duration: 0.12), value: store.mode)
 
             EditorStatusBar(markdown: store.markdown)
         }
@@ -570,6 +633,96 @@ struct EditorView: View {
         .onChange(of: store.mode) { newMode in
             sourceFocused = newMode == .source
         }
+    }
+}
+
+struct FloatingOutlineView: View {
+    let markdown: String
+    @Binding var isCollapsed: Bool
+
+    var body: some View {
+        let outlineHeadings = isCollapsed ? [] : MarkdownOutlineParser.headings(in: markdown)
+        VStack {
+            HStack {
+                if isCollapsed {
+                    Button {
+                        isCollapsed = false
+                    } label: {
+                        Image(systemName: "list.bullet.indent")
+                    }
+                    .buttonStyle(MinimalIconButtonStyle(size: 28))
+                    .help("展开标题目录")
+                } else {
+                    VStack(spacing: 0) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "list.bullet.indent")
+                                .foregroundStyle(.secondary)
+                            Text("标题目录")
+                                .font(.system(size: 12, weight: .semibold))
+                            Spacer(minLength: 8)
+                            Button {
+                                isCollapsed = true
+                            } label: {
+                                Image(systemName: "chevron.left")
+                            }
+                            .buttonStyle(MinimalIconButtonStyle(size: 24))
+                            .help("收起标题目录")
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(height: 30)
+
+                        Divider()
+
+                        if outlineHeadings.isEmpty {
+                            Text("暂无标题")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                        } else {
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 2) {
+                                    ForEach(outlineHeadings) { heading in
+                                        Button {
+                                            MarkdownEditorCommandCenter.shared.scrollToHeading(heading)
+                                        } label: {
+                                            HStack(spacing: 5) {
+                                                Text("H\(heading.level)")
+                                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                                    .foregroundStyle(.tertiary)
+                                                    .frame(width: 18)
+                                                Text(heading.title)
+                                                    .font(.system(size: 11.5))
+                                                    .lineLimit(1)
+                                                    .truncationMode(.tail)
+                                            }
+                                            .padding(.leading, CGFloat(max(0, heading.level - 1)) * 7)
+                                            .padding(.horizontal, 6)
+                                            .frame(maxWidth: .infinity, minHeight: 25, alignment: .leading)
+                                            .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(4)
+                            }
+                            .frame(maxHeight: 260)
+                        }
+                    }
+                    .frame(width: 232)
+                    .background(.regularMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.75)
+                    }
+                    .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                }
+                Spacer()
+            }
+            Spacer()
+        }
+        .padding(8)
     }
 }
 
@@ -2339,18 +2492,54 @@ enum MarkdownRichText {
         case let .heading(level):
             typingAttributes = typingAttributesFor(style: Block.heading, level: level)
             replacement = NSAttributedString(string: "", attributes: typingAttributes)
+        case .bold, .italic, .strikethrough, .inlineCode, .link:
+            typingAttributes = typingAttributesFor(style: Block.paragraph)
+            var inlineAttributes = typingAttributes
+            let inlineStyle: String
+            let placeholder: String
+            switch command.kind {
+            case .bold:
+                inlineStyle = Inline.bold
+                placeholder = "粗体"
+            case .italic:
+                inlineStyle = Inline.italic
+                placeholder = "斜体"
+            case .strikethrough:
+                inlineStyle = Inline.strikethrough
+                placeholder = "删除线"
+            case .inlineCode:
+                inlineStyle = Inline.code
+                placeholder = "代码"
+            default:
+                inlineStyle = Inline.link
+                placeholder = "链接文字"
+                inlineAttributes[.markdownLinkURL] = "https://"
+            }
+            inlineAttributes[.markdownInlineStyle] = inlineStyle
+            replacement = NSAttributedString(string: placeholder, attributes: inlineAttributes)
         case .unorderedList:
             typingAttributes = typingAttributesFor(style: Block.unorderedList)
             replacement = NSAttributedString(string: "\u{2022} ", attributes: typingAttributes)
         case .orderedList:
             typingAttributes = typingAttributesFor(style: Block.orderedList, index: 1)
             replacement = NSAttributedString(string: "1. ", attributes: typingAttributes)
+        case .taskList:
+            typingAttributes = typingAttributesFor(style: Block.unorderedList)
+            var taskAttributes = typingAttributes
+            taskAttributes[.markdownTaskState] = "unchecked"
+            replacement = NSAttributedString(string: "☐ 待办事项", attributes: taskAttributes)
         case .quote:
             typingAttributes = typingAttributesFor(style: Block.quote)
             replacement = NSAttributedString(string: "", attributes: typingAttributes)
         case .code:
             typingAttributes = typingAttributesFor(style: Block.code)
             replacement = NSAttributedString(string: "", attributes: typingAttributes)
+        case .table:
+            typingAttributes = typingAttributesFor(style: Block.paragraph)
+            replacement = parse(
+                markdown: "| 标题 1 | 标题 2 |\n| --- | --- |\n| 内容 1 | 内容 2 |",
+                baseURL: nil
+            )
         case .rule:
             typingAttributes = typingAttributesFor(style: Block.rule)
             replacement = NSAttributedString(string: "――――――――", attributes: typingAttributes)
@@ -4381,9 +4570,12 @@ private enum MarkdownSelfTest {
         testHeadingMarkdownRendersWithoutSourceMarker()
         testRenderedHeadingShortcutConsumesHashMarker()
         testSlashCommandAppliesHeadingStyle()
+        testExpandedSlashCommands()
         testSlashBackspaceKeepsLiteralSlash()
+        testOutlineParser()
         testLocalImageRendersAndRoundTrips()
         testInsertedImageUsesOwnParagraph()
+        testStagedImagesMaterializeOnSave()
         testHeadingReturnResetsToParagraph()
         testUnorderedListReturnContinuesMarker()
         testOrderedListReturnIncrementsMarker()
@@ -4415,6 +4607,70 @@ private enum MarkdownSelfTest {
         precondition(
             MarkdownRichText.serialize(textView.attributedString()) == "# 斜杠标题",
             "Choosing a slash heading should create heading Markdown"
+        )
+    }
+
+    private static func testExpandedSlashCommands() {
+        precondition(
+            SlashCommand.commands.contains(where: { $0.kind == .heading(6) }),
+            "Slash commands should expose all six heading levels"
+        )
+        precondition(
+            SlashCommand.commands.contains(where: { $0.kind == .table }) &&
+                SlashCommand.commands.contains(where: { $0.kind == .taskList }) &&
+                SlashCommand.commands.contains(where: { $0.kind == .strikethrough }),
+            "Slash commands should cover common block and inline Markdown formats"
+        )
+
+        let cases: [(SlashCommand.Kind, String)] = [
+            (.bold, "**粗体**"),
+            (.taskList, "- [ ] 待办事项"),
+            (.table, "| 标题 1 | 标题 2 |")
+        ]
+        for (kind, expectedMarkdown) in cases {
+            let textView = MarkdownTextView()
+            textView.string = "/"
+            textView.setSelectedRange(NSRange(location: 1, length: 0))
+            let command = SlashCommand.commands.first { $0.kind == kind }!
+            MarkdownRichText.applySlashCommand(command, in: textView)
+            let serialized = MarkdownRichText.serialize(textView.attributedString())
+            precondition(serialized.contains(expectedMarkdown), "Expanded slash command should serialize as Markdown")
+        }
+    }
+
+    private static func testOutlineParser() {
+        let markdown = "# 一级标题\n\n```\n## 代码里的伪标题\n```\n\n###### 六级标题 ###"
+        let headings = MarkdownOutlineParser.headings(in: markdown)
+        precondition(headings.map(\.level) == [1, 6], "Outline should include H1-H6 and ignore fenced code")
+        precondition(headings.map(\.title) == ["一级标题", "六级标题"], "Outline should clean optional closing markers")
+    }
+
+    private static func testStagedImagesMaterializeOnSave() {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let source = root.appendingPathComponent("sample image.png")
+        let document = root.appendingPathComponent("draft.md")
+        let tabID = UUID()
+        try! manager.createDirectory(at: root, withIntermediateDirectories: true)
+        try! Data([0x89, 0x50, 0x4E, 0x47]).write(to: source)
+
+        let insertion = try! MarkdownStore.stageImage(source, tabID: tabID)
+        let stagingDirectory = URL(string: insertion.source)!.deletingLastPathComponent()
+        defer {
+            try? manager.removeItem(at: root)
+            try? manager.removeItem(at: stagingDirectory)
+        }
+
+        let prepared = try! MarkdownStore.materializeStagedImages(
+            in: insertion.markdown,
+            tabID: tabID,
+            documentURL: document
+        )
+        precondition(!prepared.contains("file://"), "Saving should replace staged absolute image URLs")
+        precondition(prepared.contains("draft.assets/sample-image.png"), "Saving should create a portable relative image path")
+        precondition(
+            manager.fileExists(atPath: root.appendingPathComponent("draft.assets/sample-image.png").path),
+            "Saving should copy staged images beside the Markdown document"
         )
     }
 
