@@ -1,66 +1,77 @@
-# Madedown 1.2.1 发布验收
+# Madedown 1.3.0 Release Validation
 
-验收日期：2026-07-11
+**English** | [简体中文](RELEASE_VALIDATION.zh-CN.md)
 
-## 自动化检查
+Validation date: 2026-08-01
 
-- `swift build`：通过
-- `swift build -c release`：通过
-- `swift run Madedown --self-test`：通过
-- `./Scripts/check_performance_budget.sh`：通过
-- `plutil -lint Packaging/Info.plist`：通过
-- `./Scripts/audit_open_source.sh`：通过
-- App ad-hoc 代码签名严格验证：通过
-- DMG 创建、挂载、App 存在性与签名验证：通过
+## Automated Checks
 
-自测覆盖标题/列表/引用/代码/任务列表、GFM 表格、表格增删行列、图片附件渲染与 Markdown 往返、暂存图片保存迁移、剪贴板图片导入、H1–H6 目录解析、图片块空行稳定性、扩展 `/` 菜单格式、旧会话兼容、启动强制即时渲染模式、标签光标/滚动位置持久化，以及带本地图片的 HTML/PDF 导出等行为。
+- `swift build`: passed
+- `swift build -c release`: passed
+- `swift run Madedown --self-test`: passed
+- `.build/release/Madedown --self-test`: passed
+- `swift run MadedownUpdaterHelper --self-test`: passed, including temporary signed-app validation, in-place replacement, and rollback
+- `./Scripts/check_performance_budget.sh`: passed
+- `plutil -lint Packaging/Info.plist dist/Madedown.app/Contents/Info.plist`: passed; app version is `1.3.0` (build `7`)
+- `./Scripts/audit_open_source.sh`: passed
+- Strict ad-hoc code-signature verification for the app and bundled `MadedownUpdaterHelper`: passed
+- `Madedown-1.3.0.dmg` creation and checksum verification: passed
+- DMG SHA-256: `b2e7dd7b0b127561de17d2505abde203b8b0a7ed36f9f03dc2abf8d13ef3c2fc`
+- `git diff --check`: passed
 
-## 真实 macOS UI 验收
+The self-test suite continues to cover headings, soft breaks, lists, quotes, code, task lists, images, HTML/PDF export, sessions, per-tab viewports, the outline, and GFM tables. The 1.3.0 regressions additionally cover:
 
-使用 Computer Use 对 Release App 二进制进行了辅助功能树、键盘、鼠标和截图验收：
+- Markdown paste classification for headings, lists, tables, inline formatting, and ordinary-text false positives
+- Converted Markdown paste retaining serializable headings and lists
+- Applying and removing bold with `⌘B` and strikethrough with `⇧⌘X`
+- English as the no-preference default, language persistence in an independent preferences domain, and representative English/Chinese UI and slash-command translations
+- Table paragraph terminators retaining the same `NSTextTableBlock` and table identifier
+- A two-column, two-row table producing three ordered vertical and horizontal grid boundaries
+- The continuous overlay using the exact native table border box instead of reapplying 16 pt outer margins
+- Viewport persistence using the top-visible character anchor and pixel offset, including backward-compatible session decoding
+- Semantic-version ordering and stable/prerelease priority
+- DMG asset preference and rejection of unsafe non-HTTPS/non-GitHub download URLs
+- Updater validation of bundle identifier, version, executable, and signature; corrupted apps are rejected
+- The helper's temporary transaction: old-version backup → in-place replacement → target validation → backup removal, with rollback on failure
 
-- 全新启动、会话重启恢复
-- 新建、打开、保存、另存为、多标签切换和标签重命名
-- 未保存标签关闭警告与保存分支
-- 渲染/源码双向切换，标题换行恢复正文
-- 行首 `/` 双列菜单显示，包含 H1–H6、常用行内格式、任务列表和表格
-- `/` 菜单方向键、回车、Esc 和鼠标选择
-- `/` 菜单打开时退格只关闭菜单并保留 `/`
-- 渲染模式和源码模式的 `/` 格式命令
-- 工具栏、`⇧⌘I` 和 `/` 菜单三种图片入口
-- 未保存文档无需保存即可直接插图并实时渲染
-- 首次保存时暂存图片自动迁移到 `<文档名>.assets` 并改写为相对路径
-- 图片复制到 `<文档名>.assets`，源码使用相对路径
-- 图片在编辑器直接显示，列表项与图片保持独立块
-- 图片源码/渲染连续两次往返后空行和顺序稳定
-- 保存、关闭、重新打开带图片文档后继续显示
-- 无序列表自动续写与退格退出
-- GFM 表格渲染、可见行列控件、新增行及源码序列化
-- 复制 Markdown 后在新标签粘贴
-- 全宽/阅读宽度、紧凑窗口、左/右半屏、最大化与置顶
-- 右上角超轻材质悬浮标题目录的 H1–H6 识别、点击跳转和收起
-- 在源码模式退出应用后重新启动，活动标签恢复为即时渲染模式
-- 多标签快速切换时复用编辑器实例，无销毁重建和淡入等待
-- 关于窗口版本、图标和开源文案
+## Real macOS UI Validation
 
-## 性能与内存
+The Release app was exercised through the real macOS interface. Test-only content stayed in temporary tabs, and the final empty test tab was removed.
 
-本版本针对连续输入和图片文档做了以下验证：
+- The Open, Save, Copy, and Image text buttons are absent from the window
+- Document tabs occupy the former action-button area and share one 38 pt top row with mode, width, window-layout, pin, and language controls
+- Horizontal tab behavior, close controls, dirty indicators, and the add-tab button remain available
+- A new document in English mode is named `Untitled`
+- The globe control exposes English and Simplified Chinese; switching updates menus, tab help, the outline, empty-state text, status counts, and other visible labels after the menu closes
+- Switching back to English and relaunching restores English, confirming preference persistence
+- Existing document titles and contents are not translated
+- Repeated vertical table scrolling keeps every visible boundary connected
+- The first and last table rows have exactly one outer boundary; no extra line is drawn inside either margin
+- Dark-mode wordmark contrast and the shared small-radius visual language remain correct
+- Existing source/rendered switching, layout controls, outline navigation, and tab session restoration remain intact
 
-- 会话写入采用 350 ms 合并落盘，避免每次按键都编码并写入所有标签
-- CI 硬性限制 Release 可执行文件 8 MiB、App 包 12 MiB、启动探针 750 ms、启动 RSS 80 MiB
-- 富文本输入只重绘受影响行；粘贴多行时只处理粘贴覆盖的行范围
-- 本地图片由 ImageIO 直接生成目标尺寸缩略图
-- 图片缓存限制为最多 32 张、总成本不超过 32 MiB
-- 标题栏字标按实际显示尺寸解码
-- 自动化自测的 Release 二进制用时约 0.67 秒，峰值物理 footprint 约 39 MB
-- 包含多个标签和本地图片的真实 UI 压测实例，优化后物理 footprint 从约 117 MB 降至约 94 MB；该数字包含 SwiftUI/AppKit、窗口图形缓冲和测试过程中加载的多个文档
+## Performance and Memory
 
-以上数值用于发现回归，不代表所有 macOS 版本和屏幕配置下的固定占用。
+Latest budget result:
 
-## 隐私与仓库内容
+- Release main executable: `3,810,968 B` (budget: `8 MiB`)
+- App bundle including updater helper: `5,208 KiB` (budget: `12 MiB`)
+- Startup probe: `20 ms` (budget: `750 ms`)
+- Startup RSS: `16,777,216 B` (budget: `80 MiB`)
 
-- 会话文件位于用户的 `~/Library/Application Support/MarkdownNotepad/`，不在项目目录
-- UI 验收没有读取、修改或提交用户的正式文档，测试内容与暂存附件已清理
-- `.build`、`dist`、`.DS_Store`、环境文件和常见密钥格式均被忽略
-- 发布前对实际待提交文件再次执行敏感路径、常见凭证格式和大文件检查
+Update work starts only after a user action and adds no resident background process. The helper runs briefly only after **Install and Relaunch** is confirmed. GitHub requests and asset downloads use system `URLSession`; download tasks are released after completion. The title-bar wordmark is decoded near its display size.
+
+These budgets detect regressions; they are not fixed measurements for every macOS version or display configuration.
+
+## Privacy, Updates, and Repository Content
+
+- Session files stay under `~/Library/Application Support/MarkdownNotepad/`, outside the repository
+- The language choice is stored separately in local preferences and does not alter document/session schema
+- GitHub is contacted only after a manual update check; document content is never sent
+- Installer downloads must use approved GitHub HTTPS hosts and are staged under `~/Library/Application Support/Madedown/Updates/`
+- The package is validated before the app quits; installation starts only after another explicit confirmation
+- The helper replaces only the running app path, removes the rollback copy after a successful launch, and restores the old version after failure
+- Administrator authorization is used when needed instead of installing a second copy; same-named apps elsewhere are not scanned or deleted
+- The UI test did not save changes to the user's formal documents
+- `.build`, `dist`, `.DS_Store`, environment files, and common credential formats remain ignored
+- GitHub-facing README, changelog, update announcement, contribution guidance, issue templates, and release validation are English-first with linked Chinese counterparts where applicable

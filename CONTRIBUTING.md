@@ -1,14 +1,23 @@
-# 为 Madedown 贡献代码
+# Contributing to Madedown
 
-感谢你愿意改进 Madedown（读作“玛德蛋”）。
+**English** | [简体中文](CONTRIBUTING.zh-CN.md)
 
-## 开始之前
+Thank you for helping improve Madedown.
 
-1. 先搜索已有 Issue，避免重复工作。
-2. 功能改动建议先开 Issue 说明目标和交互。
-3. 每个 Pull Request 尽量只解决一个清晰问题。
+## Before You Start
 
-## 本地开发
+1. Search existing issues to avoid duplicate work.
+2. Open an issue before a feature change to explain the goal and proposed interaction.
+3. Keep each pull request focused on one clear problem.
+
+### Language policy
+
+- Use an English title and English-first body for new issues and pull requests.
+- A complete Simplified Chinese translation is welcome inside a collapsible `<details><summary>简体中文</summary>…</details>` section.
+- User-facing repository documents default to English and link to their `.zh-CN.md` counterparts.
+- This policy keeps the public project accessible while preserving first-class Chinese documentation.
+
+## Local Development
 
 ```bash
 swift build
@@ -16,29 +25,31 @@ swift run Madedown --self-test
 swift run Madedown
 ```
 
-提交前请同时运行：
+Also run this before submitting:
 
 ```bash
 ./Scripts/audit_open_source.sh
 ```
 
-涉及 UI 的改动请参考 [Docs/RELEASE_VALIDATION.md](Docs/RELEASE_VALIDATION.md) 中的真实界面检查项进行回归。
+For UI changes, complete the relevant real-interface checks in [Release Validation](Docs/RELEASE_VALIDATION.md).
 
-## 代码要求
+## Code Requirements
 
-- 支持 macOS 13 及以上版本。
-- 优先使用系统框架，谨慎增加第三方依赖。
-- 不在主线程执行网络请求或持续的大文件 I/O。
-- 新功能应补充 `--self-test` 覆盖，或在 Pull Request 中写明手工验证方法。
-- 不提交个人文档、会话文件、密钥、构建缓存、应用包或 DMG。
+- Support macOS 13 and later.
+- Prefer system frameworks and add third-party dependencies cautiously.
+- Do not perform networking or sustained large-file I/O on the main thread.
+- Add `--self-test` coverage for new behavior, or document the manual verification in the pull request.
+- Do not commit personal documents, session files, credentials, build caches, app bundles, or DMGs.
+- Keep English and Simplified Chinese user-visible strings equivalent when changing localized UI.
+- Keep paired English and `.zh-CN.md` documents synchronized when changing GitHub-facing content.
 
-## Pull Request
+## Pull Requests
 
-请说明：
+Describe:
 
-- 改了什么、为什么改
-- 用户可见影响
-- 验证方式和结果
-- 如有 UI 变化，请附截图或录屏
+- What changed and why
+- User-visible impact
+- Verification commands and results
+- Screenshots or a recording for UI changes
 
-提交即表示你同意按项目的 MIT License 授权你的贡献。
+By submitting a contribution, you agree to license it under the project's MIT License.

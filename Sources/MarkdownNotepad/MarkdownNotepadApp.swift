@@ -36,80 +36,100 @@ struct MadedownApp: App {
         }
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("新建") {
+                Button(store.localized("New", "新建")) {
                     store.newDocument()
                 }
                 .keyboardShortcut("n")
             }
 
             CommandGroup(after: .newItem) {
-                Button("打开...") {
+                Button(store.localized("Open...", "打开...")) {
                     store.openDocument()
                 }
                 .keyboardShortcut("o")
             }
 
             CommandGroup(replacing: .printItem) {
-                Button("快速打开最近文件…") {
+                Button(store.localized("Quick Open Recent File…", "快速打开最近文件…")) {
                     store.presentQuickOpen()
                 }
                 .keyboardShortcut("p")
             }
 
             CommandGroup(replacing: .saveItem) {
-                Button("保存") {
+                Button(store.localized("Save", "保存")) {
                     store.saveDocument()
                 }
                 .keyboardShortcut("s")
 
-                Button("另存为...") {
+                Button(store.localized("Save As...", "另存为...")) {
                     store.saveDocumentAs()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
 
                 Divider()
 
-                Button("导出 HTML…") {
+                Button(store.localized("Export HTML…", "导出 HTML…")) {
                     store.exportHTML()
                 }
 
-                Button("导出 PDF…") {
+                Button(store.localized("Export PDF…", "导出 PDF…")) {
                     store.exportPDF()
                 }
             }
 
             CommandGroup(after: .pasteboard) {
-                Button("插入图片…") {
+                Button(store.localized("Insert Image…", "插入图片…")) {
                     store.insertImage()
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
 
                 Divider()
 
-                Button("查找与替换…") {
+                Button(store.localized("Find and Replace…", "查找与替换…")) {
                     MarkdownEditorCommandCenter.shared.performFindAction(.showFindInterface)
                 }
                 .keyboardShortcut("f")
 
-                Button("查找下一个") {
+                Button(store.localized("Find Next", "查找下一个")) {
                     MarkdownEditorCommandCenter.shared.performFindAction(.nextMatch)
                 }
                 .keyboardShortcut("g")
 
-                Button("查找上一个") {
+                Button(store.localized("Find Previous", "查找上一个")) {
                     MarkdownEditorCommandCenter.shared.performFindAction(.previousMatch)
                 }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
             }
 
+            CommandMenu(store.localized("Format", "格式")) {
+                Button(store.localized("Bold", "加粗")) {
+                    MarkdownEditorCommandCenter.shared.toggleInlineFormat(.bold)
+                }
+                .keyboardShortcut("b")
+
+                Button(store.localized("Strikethrough", "删除线")) {
+                    MarkdownEditorCommandCenter.shared.toggleInlineFormat(.strikethrough)
+                }
+                .keyboardShortcut("x", modifiers: [.command, .shift])
+            }
+
+            CommandMenu(store.localized("Language", "语言")) {
+                ForEach(AppLanguage.allCases) { language in
+                    Button((store.appLanguage == language ? "✓ " : "") + language.nativeName) {
+                        store.appLanguage = language
+                    }
+                }
+            }
+
             CommandGroup(replacing: .help) {
-                Button("关于 Madedown") {
-                    MadedownApplicationController.showAboutPanel()
+                Button(store.localized("About Madedown", "关于 Madedown")) {
+                    MadedownApplicationController.showAboutPanel(language: store.appLanguage)
                 }
 
                 Divider()
 
-                Button("检查更新…") {
+                Button(store.localized("Check for Updates…", "检查更新…")) {
                     MadedownApplicationController.checkForUpdates()
                 }
             }
@@ -147,15 +167,19 @@ struct MarkdownDocumentTab: Identifiable, Codable, Equatable {
     var isDirty: Bool
     var renderedCaretLocation: Int?
     var renderedScrollOffset: Double?
+    var renderedVisibleAnchorLocation: Int?
+    var renderedVisibleAnchorOffset: Double?
     var sourceCaretLocation: Int?
     var sourceScrollOffset: Double?
+    var sourceVisibleAnchorLocation: Int?
+    var sourceVisibleAnchorOffset: Double?
 
     init(
         id: UUID = UUID(),
         markdown: String = "",
         mode: EditorMode = .rendered,
         fileURL: URL? = nil,
-        untitledName: String = "未命名",
+        untitledName: String = "Untitled",
         isDirty: Bool = false
     ) {
         self.id = id
@@ -167,8 +191,12 @@ struct MarkdownDocumentTab: Identifiable, Codable, Equatable {
         self.isDirty = isDirty
         self.renderedCaretLocation = nil
         self.renderedScrollOffset = nil
+        self.renderedVisibleAnchorLocation = nil
+        self.renderedVisibleAnchorOffset = nil
         self.sourceCaretLocation = nil
         self.sourceScrollOffset = nil
+        self.sourceVisibleAnchorLocation = nil
+        self.sourceVisibleAnchorOffset = nil
     }
 
     var fileURL: URL? {
@@ -181,7 +209,7 @@ struct MarkdownDocumentTab: Identifiable, Codable, Equatable {
 
     var suggestedSaveFilename: String {
         let title = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallback = title.isEmpty ? "未命名" : title
+        let fallback = title.isEmpty ? "Untitled" : title
         return (fallback as NSString).pathExtension.isEmpty ? "\(fallback).md" : fallback
     }
 }
@@ -189,10 +217,38 @@ struct MarkdownDocumentTab: Identifiable, Codable, Equatable {
 struct EditorViewport: Equatable {
     var caretLocation: Int
     var scrollOffset: Double
+    var visibleAnchorLocation: Int?
+    var visibleAnchorOffset: Double?
+
+    init(
+        caretLocation: Int,
+        scrollOffset: Double,
+        visibleAnchorLocation: Int? = nil,
+        visibleAnchorOffset: Double? = nil
+    ) {
+        self.caretLocation = caretLocation
+        self.scrollOffset = scrollOffset
+        self.visibleAnchorLocation = visibleAnchorLocation
+        self.visibleAnchorOffset = visibleAnchorOffset
+    }
 }
 
 @MainActor
 final class MarkdownStore: ObservableObject {
+    @Published var appLanguage: AppLanguage {
+        didSet {
+            guard oldValue != appLanguage else { return }
+            appLanguage.persist()
+            for index in tabs.indices where tabs[index].fileURL == nil &&
+                tabs[index].customTitle == nil &&
+                tabs[index].markdown.isEmpty &&
+                !tabs[index].isDirty &&
+                tabs[index].untitledName == oldValue.untitledDocumentName {
+                tabs[index].untitledName = appLanguage.untitledDocumentName
+            }
+            persistSession()
+        }
+    }
     @Published private(set) var tabs: [MarkdownDocumentTab]
     @Published var activeTabID: UUID {
         didSet { persistSession() }
@@ -222,6 +278,8 @@ final class MarkdownStore: ObservableObject {
     private var sessionPersistenceTask: Task<Void, Never>?
 
     init(opening initialURL: URL? = nil) {
+        let persistedLanguage = AppLanguage.persisted()
+        appLanguage = persistedLanguage
         if let session = Self.loadSession(), !session.tabs.isEmpty {
             let restoredTabs = session.tabs.map { savedTab in
                 var tab = savedTab
@@ -235,7 +293,7 @@ final class MarkdownStore: ObservableObject {
             isAlwaysOnTop = session.isAlwaysOnTop
             isFullWidth = session.isFullWidth ?? true
         } else {
-            let tab = MarkdownDocumentTab()
+            let tab = MarkdownDocumentTab(untitledName: persistedLanguage.untitledDocumentName)
             tabs = [tab]
             activeTabID = tab.id
             isAlwaysOnTop = false
@@ -271,7 +329,11 @@ final class MarkdownStore: ObservableObject {
     }
 
     var status: String {
-        activeTab?.displayTitle ?? "未命名"
+        activeTab?.displayTitle ?? appLanguage.untitledDocumentName
+    }
+
+    func localized(_ english: String, _ simplifiedChinese: String) -> String {
+        appLanguage.text(english, simplifiedChinese)
     }
 
     var activeTab: MarkdownDocumentTab? {
@@ -296,36 +358,64 @@ final class MarkdownStore: ObservableObject {
         case .rendered:
             return EditorViewport(
                 caretLocation: tab.renderedCaretLocation ?? 0,
-                scrollOffset: tab.renderedScrollOffset ?? 0
+                scrollOffset: tab.renderedScrollOffset ?? 0,
+                visibleAnchorLocation: tab.renderedVisibleAnchorLocation,
+                visibleAnchorOffset: tab.renderedVisibleAnchorOffset
             )
         case .source:
             return EditorViewport(
                 caretLocation: tab.sourceCaretLocation ?? 0,
-                scrollOffset: tab.sourceScrollOffset ?? 0
+                scrollOffset: tab.sourceScrollOffset ?? 0,
+                visibleAnchorLocation: tab.sourceVisibleAnchorLocation,
+                visibleAnchorOffset: tab.sourceVisibleAnchorOffset
             )
         }
     }
 
-    func updateViewport(tabID: UUID, mode: EditorMode, caretLocation: Int, scrollOffset: Double) {
+    func updateViewport(
+        tabID: UUID,
+        mode: EditorMode,
+        caretLocation: Int,
+        scrollOffset: Double,
+        visibleAnchorLocation: Int? = nil,
+        visibleAnchorOffset: Double? = nil
+    ) {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
         let normalizedCaret = max(0, caretLocation)
         let normalizedOffset = max(0, scrollOffset)
+        let normalizedAnchorLocation = visibleAnchorLocation.map { max(0, $0) }
         let previousCaret: Int?
         let previousOffset: Double?
+        let previousAnchorLocation: Int?
+        let previousAnchorOffset: Double?
 
         switch mode {
         case .rendered:
             previousCaret = tabs[index].renderedCaretLocation
             previousOffset = tabs[index].renderedScrollOffset
-            guard previousCaret != normalizedCaret || abs((previousOffset ?? 0) - normalizedOffset) > 8 else { return }
+            previousAnchorLocation = tabs[index].renderedVisibleAnchorLocation
+            previousAnchorOffset = tabs[index].renderedVisibleAnchorOffset
+            guard previousCaret != normalizedCaret ||
+                    abs((previousOffset ?? 0) - normalizedOffset) > 0.5 ||
+                    previousAnchorLocation != normalizedAnchorLocation ||
+                    abs((previousAnchorOffset ?? 0) - (visibleAnchorOffset ?? 0)) > 0.5 else { return }
             tabs[index].renderedCaretLocation = normalizedCaret
             tabs[index].renderedScrollOffset = normalizedOffset
+            tabs[index].renderedVisibleAnchorLocation = normalizedAnchorLocation
+            tabs[index].renderedVisibleAnchorOffset = visibleAnchorOffset
         case .source:
             previousCaret = tabs[index].sourceCaretLocation
             previousOffset = tabs[index].sourceScrollOffset
-            guard previousCaret != normalizedCaret || abs((previousOffset ?? 0) - normalizedOffset) > 8 else { return }
+            previousAnchorLocation = tabs[index].sourceVisibleAnchorLocation
+            previousAnchorOffset = tabs[index].sourceVisibleAnchorOffset
+            guard previousCaret != normalizedCaret ||
+                    abs((previousOffset ?? 0) - normalizedOffset) > 0.5 ||
+                    previousAnchorLocation != normalizedAnchorLocation ||
+                    abs((previousAnchorOffset ?? 0) - (visibleAnchorOffset ?? 0)) > 0.5 else { return }
             tabs[index].sourceCaretLocation = normalizedCaret
             tabs[index].sourceScrollOffset = normalizedOffset
+            tabs[index].sourceVisibleAnchorLocation = normalizedAnchorLocation
+            tabs[index].sourceVisibleAnchorOffset = visibleAnchorOffset
         }
         persistSession()
     }
@@ -340,11 +430,14 @@ final class MarkdownStore: ObservableObject {
 
         activeTabID = id
         let alert = NSAlert()
-        alert.messageText = "关闭标签页？"
-        alert.informativeText = "关闭以后，尚未保存的内容将会遗失。"
+        alert.messageText = localized("Close Tab?", "关闭标签页？")
+        alert.informativeText = localized(
+            "Any unsaved content in this tab will be lost.",
+            "关闭以后，尚未保存的内容将会遗失。"
+        )
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "直接关闭")
-        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: localized("Close Without Saving", "直接关闭"))
+        alert.addButton(withTitle: localized("Save", "保存"))
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
@@ -373,7 +466,7 @@ final class MarkdownStore: ObservableObject {
         try? FileManager.default.removeItem(at: Self.stagedAssetsDirectory(for: id))
 
         if tabs.isEmpty {
-            let tab = MarkdownDocumentTab()
+            let tab = MarkdownDocumentTab(untitledName: appLanguage.untitledDocumentName)
             tabs = [tab]
             activeTabID = tab.id
         } else if wasActive {
@@ -421,7 +514,7 @@ final class MarkdownStore: ObservableObject {
             noteRecentDocument(standardizedURL)
             persistSession()
         } catch {
-            showAlert(title: "无法打开文件", message: error.localizedDescription)
+            showAlert(title: localized("Unable to Open File", "无法打开文件"), message: error.localizedDescription)
         }
     }
 
@@ -442,7 +535,7 @@ final class MarkdownStore: ObservableObject {
         do {
             try MarkdownExporter.writeHTML(markdown: markdown, baseURL: fileURL, to: url)
         } catch {
-            showAlert(title: "无法导出 HTML", message: error.localizedDescription)
+            showAlert(title: localized("Unable to Export HTML", "无法导出 HTML"), message: error.localizedDescription)
         }
     }
 
@@ -455,7 +548,7 @@ final class MarkdownStore: ObservableObject {
         do {
             try MarkdownExporter.writePDF(markdown: markdown, baseURL: fileURL, to: url)
         } catch {
-            showAlert(title: "无法导出 PDF", message: error.localizedDescription)
+            showAlert(title: localized("Unable to Export PDF", "无法导出 PDF"), message: error.localizedDescription)
         }
     }
 
@@ -466,8 +559,14 @@ final class MarkdownStore: ObservableObject {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.message = fileURL == nil
-            ? "选择一张图片。无需先保存文档，首次保存时会自动整理到附件目录。"
-            : "选择一张图片。Madedown 会将副本保存到 Markdown 文件旁的附件目录。"
+            ? localized(
+                "Choose an image. You can save the document later; Madedown will organize the image in an asset folder on first save.",
+                "选择一张图片。无需先保存文档，首次保存时会自动整理到附件目录。"
+            )
+            : localized(
+                "Choose an image. Madedown will copy it to an asset folder beside the Markdown file.",
+                "选择一张图片。Madedown 会将副本保存到 Markdown 文件旁的附件目录。"
+            )
 
         guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
 
@@ -488,7 +587,7 @@ final class MarkdownStore: ObservableObject {
             }
             return true
         } catch {
-            showAlert(title: "无法插入图片", message: error.localizedDescription)
+            showAlert(title: localized("Unable to Insert Image", "无法插入图片"), message: error.localizedDescription)
             return true
         }
     }
@@ -516,7 +615,7 @@ final class MarkdownStore: ObservableObject {
             defer { try? FileManager.default.removeItem(at: temporaryURL) }
             return insertImageFiles([temporaryURL])
         } catch {
-            showAlert(title: "无法粘贴图片", message: error.localizedDescription)
+            showAlert(title: localized("Unable to Paste Image", "无法粘贴图片"), message: error.localizedDescription)
             return true
         }
     }
@@ -551,7 +650,7 @@ final class MarkdownStore: ObservableObject {
     private func saveActiveDocumentAs() -> Bool {
         let panel = NSSavePanel()
         panel.allowedContentTypes = markdownTypes
-        panel.nameFieldStringValue = activeTab?.suggestedSaveFilename ?? "未命名.md"
+        panel.nameFieldStringValue = activeTab?.suggestedSaveFilename ?? "\(appLanguage.untitledDocumentName).md"
 
         guard panel.runModal() == .OK, let url = panel.url else { return false }
         return write(to: url)
@@ -589,7 +688,7 @@ final class MarkdownStore: ObservableObject {
             persistSession()
             return true
         } catch {
-            showAlert(title: "无法保存文件", message: error.localizedDescription)
+            showAlert(title: localized("Unable to Save File", "无法保存文件"), message: error.localizedDescription)
             return false
         }
     }
@@ -609,15 +708,16 @@ final class MarkdownStore: ObservableObject {
 
     private func nextUntitledName() -> String {
         let existing = Set(tabs.filter { $0.filePath == nil }.map(\.untitledName))
-        if !existing.contains("未命名") {
-            return "未命名"
+        let baseName = appLanguage.untitledDocumentName
+        if !existing.contains(baseName) {
+            return baseName
         }
 
         var number = 2
-        while existing.contains("未命名 \(number)") {
+        while existing.contains("\(baseName) \(number)") {
             number += 1
         }
-        return "未命名 \(number)"
+        return "\(baseName) \(number)"
     }
 
     private func imageInsertion(for sourceURL: URL) throws -> ImageInsertion {
@@ -628,9 +728,9 @@ final class MarkdownStore: ObservableObject {
     }
 
     private var exportBaseName: String {
-        let filename = activeTab?.suggestedSaveFilename ?? "未命名.md"
+        let filename = activeTab?.suggestedSaveFilename ?? "\(appLanguage.untitledDocumentName).md"
         let base = (filename as NSString).deletingPathExtension
-        return base.isEmpty ? "未命名" : base
+        return base.isEmpty ? appLanguage.untitledDocumentName : base
     }
 
     private func noteRecentDocument(_ url: URL) {
@@ -920,13 +1020,13 @@ enum MarkdownExporter {
 
 struct EditorView: View {
     @EnvironmentObject private var store: MarkdownStore
+    @ObservedObject private var updateController = MadedownUpdateController.shared
     @FocusState private var sourceFocused: Bool
     @State private var isOutlineCollapsed = false
 
     var body: some View {
         VStack(spacing: 0) {
             ToolbarView()
-            TabBarView()
 
             ZStack {
                 if store.mode == .rendered {
@@ -935,9 +1035,12 @@ struct EditorView: View {
                         text: $store.markdown,
                         tabID: store.activeTabID,
                         isFullWidth: store.isFullWidth,
+                        appLanguage: store.appLanguage,
                         documentURL: store.fileURL,
                         caretLocation: viewport.caretLocation,
                         scrollOffset: viewport.scrollOffset,
+                        visibleAnchorLocation: viewport.visibleAnchorLocation,
+                        visibleAnchorOffset: viewport.visibleAnchorOffset,
                         onRequestImage: store.insertImage,
                         onPasteImages: store.insertImages,
                         onDropImageFiles: store.insertImageFiles,
@@ -949,8 +1052,11 @@ struct EditorView: View {
                         text: $store.markdown,
                         tabID: store.activeTabID,
                         isFullWidth: store.isFullWidth,
+                        appLanguage: store.appLanguage,
                         caretLocation: viewport.caretLocation,
                         scrollOffset: viewport.scrollOffset,
+                        visibleAnchorLocation: viewport.visibleAnchorLocation,
+                        visibleAnchorOffset: viewport.visibleAnchorOffset,
                         onRequestImage: store.insertImage,
                         onPasteImages: store.insertImages,
                         onDropImageFiles: store.insertImageFiles,
@@ -961,12 +1067,21 @@ struct EditorView: View {
 
                 FloatingOutlineView(
                     markdown: store.markdown,
+                    appLanguage: store.appLanguage,
                     isCollapsed: $isOutlineCollapsed
                 )
             }
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.28), lineWidth: 0.75)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            EditorStatusBar(markdown: store.markdown)
+            EditorStatusBar(markdown: store.markdown, appLanguage: store.appLanguage)
         }
         .background(Color(nsColor: .textBackgroundColor))
         .background(
@@ -981,6 +1096,9 @@ struct EditorView: View {
         .sheet(isPresented: $store.isQuickOpenPresented) {
             QuickOpenView()
                 .environmentObject(store)
+        }
+        .sheet(isPresented: $updateController.isPresented) {
+            MadedownUpdateView(controller: updateController, language: store.appLanguage)
         }
     }
 }
@@ -1004,7 +1122,10 @@ struct QuickOpenView: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                TextField("搜索最近打开的 Markdown 文件", text: $query)
+                TextField(
+                    store.localized("Search recently opened Markdown files", "搜索最近打开的 Markdown 文件"),
+                    text: $query
+                )
                     .textFieldStyle(.plain)
                     .focused($searchFocused)
                 Button {
@@ -1024,7 +1145,11 @@ struct QuickOpenView: View {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.system(size: 24))
                         .foregroundStyle(.tertiary)
-                    Text(query.isEmpty ? "还没有最近文件" : "没有匹配的最近文件")
+                    Text(
+                        query.isEmpty
+                            ? store.localized("No recent files yet", "还没有最近文件")
+                            : store.localized("No matching recent files", "没有匹配的最近文件")
+                    )
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1068,7 +1193,7 @@ struct QuickOpenView: View {
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.tertiary)
                 Spacer()
-                Button("浏览其他文件…") {
+                Button(store.localized("Browse Other Files…", "浏览其他文件…")) {
                     store.dismissQuickOpen()
                     DispatchQueue.main.async {
                         store.openDocument()
@@ -1086,6 +1211,7 @@ struct QuickOpenView: View {
 
 struct FloatingOutlineView: View {
     let markdown: String
+    let appLanguage: AppLanguage
     @Binding var isCollapsed: Bool
 
     var body: some View {
@@ -1099,78 +1225,79 @@ struct FloatingOutlineView: View {
                     } label: {
                         Image(systemName: "list.bullet.indent")
                     }
-                    .buttonStyle(MinimalIconButtonStyle(size: 28))
-                    .help("展开标题目录")
+                    .buttonStyle(MinimalIconButtonStyle(size: 24))
+                    .help(appLanguage.text("Expand outline", "展开标题目录"))
                 } else {
                     VStack(spacing: 0) {
                         HStack(spacing: 6) {
                             Image(systemName: "list.bullet.indent")
+                                .font(.system(size: 10.5))
                                 .foregroundStyle(.secondary)
-                            Text("标题目录")
-                                .font(.system(size: 12, weight: .semibold))
+                            Text(appLanguage.text("Outline", "标题目录"))
+                                .font(.system(size: 11, weight: .semibold))
                             Spacer(minLength: 8)
                             Button {
                                 isCollapsed = true
                             } label: {
                                 Image(systemName: "chevron.right")
                             }
-                            .buttonStyle(MinimalIconButtonStyle(size: 24))
-                            .help("收起标题目录")
+                            .buttonStyle(MinimalIconButtonStyle(size: 20))
+                            .help(appLanguage.text("Collapse outline", "收起标题目录"))
                         }
-                        .padding(.horizontal, 8)
-                        .frame(height: 30)
+                        .padding(.horizontal, 7)
+                        .frame(height: 26)
 
                         Divider()
 
                         if outlineHeadings.isEmpty {
-                            Text("暂无标题")
-                                .font(.system(size: 11))
+                            Text(appLanguage.text("No headings", "暂无标题"))
+                                .font(.system(size: 10.5))
                                 .foregroundStyle(.tertiary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(10)
+                                .padding(8)
                         } else {
                             ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 2) {
+                                LazyVStack(alignment: .leading, spacing: 1) {
                                     ForEach(outlineHeadings) { heading in
                                         Button {
                                             MarkdownEditorCommandCenter.shared.scrollToHeading(heading)
                                         } label: {
-                                            HStack(spacing: 5) {
+                                            HStack(spacing: 4) {
                                                 Text("H\(heading.level)")
-                                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
                                                     .foregroundStyle(.tertiary)
-                                                    .frame(width: 18)
+                                                    .frame(width: 16)
                                                 Text(heading.title)
-                                                    .font(.system(size: 11.5))
+                                                    .font(.system(size: 10.5))
                                                     .lineLimit(1)
                                                     .truncationMode(.tail)
                                             }
-                                            .padding(.leading, CGFloat(max(0, heading.level - 1)) * 7)
-                                            .padding(.horizontal, 6)
-                                            .frame(maxWidth: .infinity, minHeight: 25, alignment: .leading)
+                                            .padding(.leading, CGFloat(max(0, heading.level - 1)) * 6)
+                                            .padding(.horizontal, 5)
+                                            .frame(maxWidth: .infinity, minHeight: 21, alignment: .leading)
                                             .contentShape(Rectangle())
                                         }
                                         .buttonStyle(.plain)
                                     }
                                 }
-                                .padding(4)
+                                .padding(3)
                             }
-                            .frame(maxHeight: 260)
+                            .frame(maxHeight: 190)
                         }
                     }
-                    .frame(width: 232)
-                    .background(.ultraThinMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .frame(width: 200)
+                    .background(Color(nsColor: .windowBackgroundColor).opacity(0.42))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .stroke(Color(nsColor: .separatorColor).opacity(0.22), lineWidth: 0.75)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(Color(nsColor: .separatorColor).opacity(0.18), lineWidth: 0.75)
                     }
-                    .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+                    .shadow(color: .black.opacity(0.04), radius: 4, y: 1)
                 }
             }
             Spacer()
         }
-        .padding(8)
+        .padding(6)
     }
 }
 
@@ -1220,13 +1347,16 @@ private enum WindowLayoutController {
 
 @MainActor
 private enum MadedownApplicationController {
-    static func showAboutPanel() {
+    static func showAboutPanel(language: AppLanguage) {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
         let options: [NSApplication.AboutPanelOptionKey: Any] = [
             .applicationName: "Madedown",
             .applicationVersion: version,
             .credits: NSAttributedString(
-                string: "一款由 AI 协助打造的轻量、免费、开源 Markdown 编辑器。",
+                string: language.text(
+                    "A lightweight, free, open-source Markdown editor built with the help of AI.",
+                    "一款由 AI 协助打造的轻量、免费、开源 Markdown 编辑器。"
+                ),
                 attributes: [
                     .font: NSFont.systemFont(ofSize: 12),
                     .foregroundColor: NSColor.secondaryLabelColor
@@ -1239,17 +1369,7 @@ private enum MadedownApplicationController {
     }
 
     static func checkForUpdates() {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
-        let alert = NSAlert()
-        alert.messageText = "检查更新"
-        alert.informativeText = "当前版本：\(version)\n\n最新版本和安装包发布在 Madedown 的 GitHub Releases 页面。"
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "前往 GitHub Releases")
-        alert.addButton(withTitle: "取消")
-        if alert.runModal() == .alertFirstButtonReturn,
-           let url = URL(string: "https://github.com/zhxnix/Madedown/releases/latest") {
-            NSWorkspace.shared.open(url)
-        }
+        MadedownUpdateController.shared.checkForUpdates()
     }
 }
 
@@ -1304,6 +1424,17 @@ struct WindowConfigurationView: NSViewRepresentable {
 
 @MainActor
 final class PassthroughWindowTitleImageView: NSImageView {
+    func useAdaptiveWordmark(_ sourceImage: NSImage?) {
+        image = sourceImage?.copy() as? NSImage
+        image?.isTemplate = true
+        contentTintColor = .labelColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        contentTintColor = .labelColor
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }
@@ -1366,7 +1497,7 @@ final class WindowConfigurationNSView: NSView {
                 imageView.heightAnchor.constraint(equalToConstant: 18)
             ])
         }
-        imageView.image = MadedownBrandAssets.titlebarWordmark
+        imageView.useAdaptiveWordmark(MadedownBrandAssets.titlebarWordmark)
     }
 }
 
@@ -1375,37 +1506,13 @@ struct ToolbarView: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            Button("新建") {
-                store.newDocument()
-            }
-            .buttonStyle(ToolbarActionButtonStyle())
-            .help("新建")
+            TabBarView()
+                .frame(minWidth: 0, maxWidth: .infinity)
+                .layoutPriority(1)
 
-            Button("打开") {
-                store.openDocument()
-            }
-            .buttonStyle(ToolbarActionButtonStyle())
-            .help("打开")
-
-            Button("保存") {
-                store.saveDocument()
-            }
-            .buttonStyle(ToolbarActionButtonStyle())
-            .help("保存")
-
-            Button("复制") {
-                store.copyMarkdown()
-            }
-            .buttonStyle(ToolbarActionButtonStyle())
-            .help("复制 Markdown")
-
-            Button("图片") {
-                store.insertImage()
-            }
-            .buttonStyle(ToolbarActionButtonStyle())
-            .help("插入图片（⇧⌘I）")
-
-            Spacer(minLength: 0)
+            Divider()
+                .frame(height: 15)
+                .padding(.horizontal, 3)
 
             Button {
                 store.mode = store.mode == .rendered ? .source : .rendered
@@ -1413,7 +1520,11 @@ struct ToolbarView: View {
                 Image(systemName: store.mode == .rendered ? "curlybraces" : "text.alignleft")
             }
             .buttonStyle(WindowIconButtonStyle(isActive: store.mode == .source))
-            .help(store.mode == .rendered ? "切换到源码" : "返回渲染编辑")
+            .help(
+                store.mode == .rendered
+                    ? store.localized("Switch to Source", "切换到源码")
+                    : store.localized("Return to Rendered Editing", "返回渲染编辑")
+            )
 
             Button {
                 store.toggleFullWidth()
@@ -1421,7 +1532,11 @@ struct ToolbarView: View {
                 Image(systemName: "arrow.left.and.right")
             }
             .buttonStyle(WindowIconButtonStyle(isActive: store.isFullWidth))
-            .help(store.isFullWidth ? "关闭全宽，使用舒适阅读宽度" : "开启全宽")
+            .help(
+                store.isFullWidth
+                    ? store.localized("Use Comfortable Reading Width", "关闭全宽，使用舒适阅读宽度")
+                    : store.localized("Use Full Width", "开启全宽")
+            )
 
             Divider()
                 .frame(height: 15)
@@ -1433,7 +1548,7 @@ struct ToolbarView: View {
                 Image(systemName: "rectangle.center.inset.filled")
             }
             .buttonStyle(WindowIconButtonStyle())
-            .help("缩为小窗口（900 × 800）")
+            .help(store.localized("Compact Window (900 × 800)", "缩为小窗口（900 × 800）"))
 
             Button {
                 WindowLayoutController.tile(.left)
@@ -1441,7 +1556,7 @@ struct ToolbarView: View {
                 Image(systemName: "rectangle.lefthalf.filled")
             }
             .buttonStyle(WindowIconButtonStyle())
-            .help("铺满左半屏")
+            .help(store.localized("Tile Left", "铺满左半屏"))
 
             Button {
                 WindowLayoutController.tile(.right)
@@ -1449,7 +1564,7 @@ struct ToolbarView: View {
                 Image(systemName: "rectangle.righthalf.filled")
             }
             .buttonStyle(WindowIconButtonStyle())
-            .help("铺满右半屏")
+            .help(store.localized("Tile Right", "铺满右半屏"))
 
             Button {
                 WindowLayoutController.toggleMaximize()
@@ -1457,7 +1572,7 @@ struct ToolbarView: View {
                 Image(systemName: "rectangle.inset.filled")
             }
             .buttonStyle(WindowIconButtonStyle())
-            .help("最大化 / 恢复")
+            .help(store.localized("Maximize / Restore", "最大化 / 恢复"))
 
             Button {
                 store.toggleAlwaysOnTop()
@@ -1465,11 +1580,40 @@ struct ToolbarView: View {
                 Image(systemName: store.isAlwaysOnTop ? "pin.fill" : "pin")
             }
             .buttonStyle(WindowIconButtonStyle(isActive: store.isAlwaysOnTop))
-            .help(store.isAlwaysOnTop ? "取消置顶" : "固定在最上层")
+            .help(
+                store.isAlwaysOnTop
+                    ? store.localized("Stop Keeping on Top", "取消置顶")
+                    : store.localized("Keep on Top", "固定在最上层")
+            )
+
+            Menu {
+                ForEach(AppLanguage.allCases) { language in
+                    Button {
+                        store.appLanguage = language
+                    } label: {
+                        HStack {
+                            Text(language.nativeName)
+                            if store.appLanguage == language {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "globe")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: 28, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(store.localized("Language", "语言"))
         }
         .padding(.leading, 6)
         .padding(.trailing, 10)
-        .frame(height: 36)
+        .frame(height: 38)
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.86))
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -1498,7 +1642,7 @@ struct TabBarView: View {
                         }
 
                         if editingTabID == tab.id {
-                            TextField("标签名称", text: $editingTitle)
+                            TextField(store.localized("Tab Name", "标签名称"), text: $editingTitle)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 12, weight: .medium))
                                 .frame(width: 120)
@@ -1527,14 +1671,14 @@ struct TabBarView: View {
                                 .font(.system(size: 9, weight: .semibold))
                         }
                         .buttonStyle(MinimalIconButtonStyle(size: 20))
-                        .help("关闭标签页")
+                        .help(store.localized("Close Tab", "关闭标签页"))
                     }
                     .foregroundStyle(isActive ? .primary : .secondary)
                     .padding(.leading, 10)
                     .padding(.trailing, 3)
                     .frame(height: 28)
                     .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .fill(
                                 isActive
                                     ? Color.accentColor.opacity(0.12)
@@ -1542,7 +1686,7 @@ struct TabBarView: View {
                             )
                     )
                     .overlay {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .stroke(
                                 isActive
                                     ? Color.accentColor.opacity(0.28)
@@ -1562,17 +1706,11 @@ struct TabBarView: View {
                     Image(systemName: "plus")
                 }
                 .buttonStyle(TabAddButtonStyle())
-                .help("新建标签页")
+                .help(store.localized("New Tab", "新建标签页"))
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 2)
         }
         .frame(height: 38)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.78))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor).opacity(0.4))
-                .frame(height: 0.5)
-        }
         .onChange(of: titleEditorFocused) { focused in
             if !focused, editingTabID != nil {
                 commitTabRename()
@@ -1624,11 +1762,11 @@ struct TabAddButtonStyle: ButtonStyle {
             .foregroundStyle(.secondary)
             .frame(width: 27, height: 27)
             .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(Color(nsColor: .controlBackgroundColor).opacity(configuration.isPressed ? 0.85 : 0.48))
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .stroke(Color(nsColor: .separatorColor).opacity(0.24), lineWidth: 0.75)
             }
             .contentShape(Rectangle())
@@ -1637,6 +1775,7 @@ struct TabAddButtonStyle: ButtonStyle {
 
 struct EditorStatusBar: View {
     let markdown: String
+    let appLanguage: AppLanguage
 
     private var characterCount: Int {
         markdown.unicodeScalars.reduce(into: 0) { count, scalar in
@@ -1649,7 +1788,12 @@ struct EditorStatusBar: View {
     var body: some View {
         HStack {
             Spacer()
-            SwiftUI.Text("\(characterCount) 字")
+            SwiftUI.Text(
+                appLanguage.text(
+                    "\(characterCount) characters",
+                    "\(characterCount) 字"
+                )
+            )
                 .font(.system(size: 10.5, weight: .regular))
                 .foregroundStyle(.tertiary)
                 .monospacedDigit()
@@ -1746,15 +1890,20 @@ final class TableCommandCenter: ObservableObject {
 final class TableEdgeControls: NSView {
     private let rowPlusButton = NSButton(title: "", target: nil, action: nil)
     private let columnPlusButton = NSButton(title: "", target: nil, action: nil)
-    private let rowHandleButton = TableHandleButton(title: "行", target: nil, action: nil)
-    private let columnHandleButton = TableHandleButton(title: "列", target: nil, action: nil)
+    private let rowHandleButton = TableHandleButton(title: "", target: nil, action: nil)
+    private let columnHandleButton = TableHandleButton(title: "", target: nil, action: nil)
+
+    var appLanguage: AppLanguage {
+        didSet { updateLocalizedTitles() }
+    }
 
     var onRowMenu: ((NSPoint) -> Void)?
     var onColumnMenu: ((NSPoint) -> Void)?
 
     override var isFlipped: Bool { true }
 
-    init(target: AnyObject) {
+    init(target: AnyObject, language: AppLanguage) {
+        appLanguage = language
         super.init(frame: .zero)
 
         autoresizingMask = [.width, .height]
@@ -1776,6 +1925,7 @@ final class TableEdgeControls: NSView {
             $0.isHidden = true
             addSubview($0)
         }
+        updateLocalizedTitles()
     }
 
     @available(*, unavailable)
@@ -1810,6 +1960,11 @@ final class TableEdgeControls: NSView {
         columnPlusButton.isHidden = true
         rowHandleButton.isHidden = true
         columnHandleButton.isHidden = true
+    }
+
+    private func updateLocalizedTitles() {
+        rowHandleButton.title = appLanguage.text("Row", "行")
+        columnHandleButton.title = appLanguage.text("Column", "列")
     }
 
     private func position(_ button: NSButton, frame: NSRect?) {
@@ -1894,16 +2049,91 @@ final class SourceMarkdownTextView: SlashCommandTextView {
     }
 }
 
+@MainActor
+private enum TextViewportPersistence {
+    struct Anchor {
+        let location: Int
+        let offset: Double
+    }
+
+    static func capture(in textView: NSTextView, scrollView: NSScrollView) -> Anchor? {
+        guard let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer,
+              let storage = textView.textStorage,
+              storage.length > 0 else {
+            return nil
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+        guard layoutManager.numberOfGlyphs > 0 else { return nil }
+
+        let visibleTop = scrollView.contentView.bounds.minY
+        let pointInContainer = NSPoint(
+            x: max(1, scrollView.contentView.bounds.minX - textView.textContainerOrigin.x + 1),
+            y: max(0, visibleTop - textView.textContainerOrigin.y + 1)
+        )
+        let glyphIndex = min(
+            layoutManager.glyphIndex(for: pointInContainer, in: textContainer),
+            layoutManager.numberOfGlyphs - 1
+        )
+        let location = min(layoutManager.characterIndexForGlyph(at: glyphIndex), storage.length)
+        let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+        let lineTop = lineRect.minY + textView.textContainerOrigin.y
+        return Anchor(location: location, offset: Double(visibleTop - lineTop))
+    }
+
+    static func restoredOffset(
+        in textView: NSTextView,
+        scrollView: NSScrollView,
+        anchorLocation: Int?,
+        anchorOffset: Double?,
+        fallbackOffset: Double
+    ) -> CGFloat {
+        guard let anchorLocation,
+              let anchorOffset,
+              let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer,
+              let storage = textView.textStorage,
+              storage.length > 0 else {
+            return constrainedOffset(CGFloat(max(0, fallbackOffset)), in: scrollView)
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+        guard layoutManager.numberOfGlyphs > 0 else {
+            return constrainedOffset(CGFloat(max(0, fallbackOffset)), in: scrollView)
+        }
+
+        let characterIndex = min(max(0, anchorLocation), storage.length - 1)
+        let glyphIndex = min(
+            layoutManager.glyphIndexForCharacter(at: characterIndex),
+            layoutManager.numberOfGlyphs - 1
+        )
+        let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+        let lineTop = lineRect.minY + textView.textContainerOrigin.y
+        return constrainedOffset(lineTop + CGFloat(anchorOffset), in: scrollView)
+    }
+
+    private static func constrainedOffset(_ offset: CGFloat, in scrollView: NSScrollView) -> CGFloat {
+        let clipView = scrollView.contentView
+        var proposedBounds = clipView.bounds
+        proposedBounds.origin.y = max(0, offset)
+        return clipView.constrainBoundsRect(proposedBounds).origin.y
+    }
+}
+
 struct SourceEditor: NSViewRepresentable {
     @Binding var text: String
     var tabID: UUID
     var isFullWidth = true
+    var appLanguage = AppLanguage.english
     var caretLocation = 0
     var scrollOffset = 0.0
+    var visibleAnchorLocation: Int? = nil
+    var visibleAnchorOffset: Double? = nil
     var onRequestImage: () -> Void = {}
     var onPasteImages: (NSPasteboard) -> Bool = { _ in false }
     var onDropImageFiles: ([URL]) -> Bool = { _ in false }
-    var onViewportChange: (UUID, EditorMode, Int, Double) -> Void = { _, _, _, _ in }
+    var onViewportChange: (UUID, EditorMode, Int, Double, Int?, Double?) -> Void = { _, _, _, _, _, _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -1919,6 +2149,7 @@ struct SourceEditor: NSViewRepresentable {
         let textView = SourceMarkdownTextView()
         context.coordinator.textView = textView
         textView.usesFullWidth = isFullWidth
+        textView.appLanguage = appLanguage
         textView.delegate = context.coordinator
         textView.onSlashCommand = { [weak coordinator = context.coordinator] command in
             coordinator?.applySlashCommand(command)
@@ -1975,6 +2206,7 @@ struct SourceEditor: NSViewRepresentable {
             return
         }
         textView.usesFullWidth = isFullWidth
+        textView.appLanguage = appLanguage
         MarkdownEditorCommandCenter.shared.activate(textView)
         let tabChanged = context.coordinator.lastTabID != tabID
         guard tabChanged || context.coordinator.lastText != text else {
@@ -2003,6 +2235,8 @@ struct SourceEditor: NSViewRepresentable {
         var lastText = ""
         var lastTabID: UUID?
         var isApplyingChange = false
+        private var viewportRestoreGeneration = 0
+        private var isRestoringViewport = false
 
         init(_ parent: SourceEditor) {
             self.parent = parent
@@ -2025,17 +2259,73 @@ struct SourceEditor: NSViewRepresentable {
 
         func restoreViewport(in scrollView: NSScrollView) {
             guard let textView else { return }
+            viewportRestoreGeneration &+= 1
+            let generation = viewportRestoreGeneration
+            let targetTabID = parent.tabID
+            let fallbackOffset = parent.scrollOffset
+            let anchorLocation = parent.visibleAnchorLocation
+            let anchorOffset = parent.visibleAnchorOffset
+            isRestoringViewport = true
             isApplyingChange = true
             textView.setSelectedRange(NSRange(
                 location: min(parent.caretLocation, (textView.string as NSString).length),
                 length: 0
             ))
             isApplyingChange = false
-            let y = max(0, parent.scrollOffset)
-            DispatchQueue.main.async { [weak scrollView] in
-                guard let scrollView else { return }
-                scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
-                scrollView.reflectScrolledClipView(scrollView.contentView)
+            DispatchQueue.main.async { [weak self, weak scrollView] in
+                self?.applyViewportRestore(
+                    in: scrollView,
+                    targetTabID: targetTabID,
+                    generation: generation,
+                    anchorLocation: anchorLocation,
+                    anchorOffset: anchorOffset,
+                    fallbackOffset: fallbackOffset,
+                    remainingPasses: 1
+                )
+            }
+        }
+
+        private func applyViewportRestore(
+            in scrollView: NSScrollView?,
+            targetTabID: UUID,
+            generation: Int,
+            anchorLocation: Int?,
+            anchorOffset: Double?,
+            fallbackOffset: Double,
+            remainingPasses: Int
+        ) {
+            guard let scrollView,
+                  let textView,
+                  generation == viewportRestoreGeneration,
+                  parent.tabID == targetTabID else {
+                return
+            }
+
+            let y = TextViewportPersistence.restoredOffset(
+                in: textView,
+                scrollView: scrollView,
+                anchorLocation: anchorLocation,
+                anchorOffset: anchorOffset,
+                fallbackOffset: fallbackOffset
+            )
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+
+            if remainingPasses > 0 {
+                DispatchQueue.main.async { [weak self, weak scrollView] in
+                    self?.applyViewportRestore(
+                        in: scrollView,
+                        targetTabID: targetTabID,
+                        generation: generation,
+                        anchorLocation: anchorLocation,
+                        anchorOffset: anchorOffset,
+                        fallbackOffset: fallbackOffset,
+                        remainingPasses: remainingPasses - 1
+                    )
+                }
+            } else {
+                isRestoringViewport = false
+                reportViewport()
             }
         }
 
@@ -2044,12 +2334,15 @@ struct SourceEditor: NSViewRepresentable {
         }
 
         private func reportViewport() {
-            guard !isApplyingChange, let textView, let scrollView else { return }
+            guard !isApplyingChange, !isRestoringViewport, let textView, let scrollView else { return }
+            let anchor = TextViewportPersistence.capture(in: textView, scrollView: scrollView)
             parent.onViewportChange(
                 parent.tabID,
                 .source,
                 textView.selectedRange().location,
-                Double(scrollView.contentView.bounds.minY)
+                Double(scrollView.contentView.bounds.minY),
+                anchor?.location,
+                anchor?.offset
             )
         }
 
@@ -2207,6 +2500,8 @@ final class MarkdownTextView: SlashCommandTextView {
     }
 
     private var mouseTrackingArea: NSTrackingArea?
+    private var tableGridGeometries: [MarkdownRichText.TableGridGeometry] = []
+    private var tableGridGeometryNeedsRefresh = true
     private let maximumContentWidth: CGFloat = 920
     private let minimumHorizontalInset: CGFloat = 10
     var usesFullWidth = true {
@@ -2241,8 +2536,31 @@ final class MarkdownTextView: SlashCommandTextView {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         layoutManager.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
         layoutManager.invalidateDisplay(forCharacterRange: fullRange)
+        tableGridGeometryNeedsRefresh = true
         needsLayout = true
         needsDisplay = true
+    }
+
+    func invalidateTableGridGeometry() {
+        tableGridGeometryNeedsRefresh = true
+        needsDisplay = true
+    }
+
+    func redrawVisibleTableBorders() {
+        let visible = visibleRect.insetBy(dx: -2, dy: -2)
+        if tableGridGeometryNeedsRefresh {
+            setNeedsDisplay(visible)
+            return
+        }
+
+        for geometry in tableGridGeometries where geometry.frame.intersects(visible) {
+            setNeedsDisplay(geometry.frame.intersection(visible).insetBy(dx: -2, dy: -2))
+        }
+    }
+
+    override func didChangeText() {
+        tableGridGeometryNeedsRefresh = true
+        super.didChangeText()
     }
 
     override var bounds: NSRect {
@@ -2255,6 +2573,15 @@ final class MarkdownTextView: SlashCommandTextView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        if tableGridGeometryNeedsRefresh {
+            tableGridGeometries = MarkdownRichText.tableGridGeometries(in: self)
+            tableGridGeometryNeedsRefresh = false
+        }
+        MarkdownRichText.drawContinuousTableGrid(
+            in: self,
+            geometries: tableGridGeometries,
+            dirtyRect: dirtyRect
+        )
         drawTableEdgeOverlay()
     }
 
@@ -2351,7 +2678,9 @@ final class MarkdownTextView: SlashCommandTextView {
         background.lineWidth = 1
         background.stroke()
 
-        let label = orientation == .horizontal ? "行" : "列"
+        let label = orientation == .horizontal
+            ? appLanguage.text("Row", "行")
+            : appLanguage.text("Column", "列")
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 10, weight: .medium),
             .foregroundColor: NSColor.controlAccentColor
@@ -2376,13 +2705,16 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
     @Binding var text: String
     var tabID: UUID
     var isFullWidth = true
+    var appLanguage = AppLanguage.english
     var documentURL: URL? = nil
     var caretLocation = 0
     var scrollOffset = 0.0
+    var visibleAnchorLocation: Int? = nil
+    var visibleAnchorOffset: Double? = nil
     var onRequestImage: () -> Void = {}
     var onPasteImages: (NSPasteboard) -> Bool = { _ in false }
     var onDropImageFiles: ([URL]) -> Bool = { _ in false }
-    var onViewportChange: (UUID, EditorMode, Int, Double) -> Void = { _, _, _, _ in }
+    var onViewportChange: (UUID, EditorMode, Int, Double, Int?, Double?) -> Void = { _, _, _, _, _, _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -2397,12 +2729,16 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
 
         let textView = MarkdownTextView()
         textView.usesFullWidth = isFullWidth
+        textView.appLanguage = appLanguage
         textView.delegate = context.coordinator
         textView.onSlashCommand = { [weak coordinator = context.coordinator] command in
             coordinator?.applySlashCommand(command)
         }
         textView.onPasteImages = { [weak coordinator = context.coordinator] pasteboard in
             coordinator?.parent.onPasteImages(pasteboard) ?? false
+        }
+        textView.onPasteMarkdownText = { [weak coordinator = context.coordinator] markdown in
+            coordinator?.handleMarkdownPaste(markdown) ?? false
         }
         textView.onDropImageFiles = { [weak coordinator = context.coordinator] urls in
             coordinator?.parent.onDropImageFiles(urls) ?? false
@@ -2466,6 +2802,7 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
         context.coordinator.parent = self
         guard let textView = scrollView.documentView as? MarkdownTextView else { return }
         textView.usesFullWidth = isFullWidth
+        textView.appLanguage = appLanguage
         MarkdownEditorCommandCenter.shared.activate(textView)
 
         let tabChanged = context.coordinator.lastTabID != tabID
@@ -2499,6 +2836,9 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
         var lastTabID: UUID?
         weak var scrollView: NSScrollView?
         private var pendingEditedRange: NSRange?
+        private var preserveMarkdownSourceForNextChange = false
+        private var viewportRestoreGeneration = 0
+        private var isRestoringViewport = false
 
         init(_ parent: RenderedMarkdownEditor) {
             self.parent = parent
@@ -2521,36 +2861,101 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
 
         func restoreViewport(in scrollView: NSScrollView) {
             guard let textView else { return }
+            viewportRestoreGeneration &+= 1
+            let generation = viewportRestoreGeneration
+            let targetTabID = parent.tabID
+            let fallbackOffset = parent.scrollOffset
+            let anchorLocation = parent.visibleAnchorLocation
+            let anchorOffset = parent.visibleAnchorOffset
+            isRestoringViewport = true
             isApplyingStyle = true
             textView.setSelectedRange(NSRange(
                 location: min(parent.caretLocation, textView.textStorage?.length ?? 0),
                 length: 0
             ))
             isApplyingStyle = false
-            let y = max(0, parent.scrollOffset)
-            DispatchQueue.main.async { [weak scrollView] in
-                guard let scrollView else { return }
-                scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
-                scrollView.reflectScrolledClipView(scrollView.contentView)
+            DispatchQueue.main.async { [weak self, weak scrollView] in
+                self?.applyViewportRestore(
+                    in: scrollView,
+                    targetTabID: targetTabID,
+                    generation: generation,
+                    anchorLocation: anchorLocation,
+                    anchorOffset: anchorOffset,
+                    fallbackOffset: fallbackOffset,
+                    remainingPasses: 1
+                )
+            }
+        }
+
+        private func applyViewportRestore(
+            in scrollView: NSScrollView?,
+            targetTabID: UUID,
+            generation: Int,
+            anchorLocation: Int?,
+            anchorOffset: Double?,
+            fallbackOffset: Double,
+            remainingPasses: Int
+        ) {
+            guard let scrollView,
+                  let textView,
+                  generation == viewportRestoreGeneration,
+                  parent.tabID == targetTabID else {
+                return
+            }
+
+            let y = TextViewportPersistence.restoredOffset(
+                in: textView,
+                scrollView: scrollView,
+                anchorLocation: anchorLocation,
+                anchorOffset: anchorOffset,
+                fallbackOffset: fallbackOffset
+            )
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+
+            if remainingPasses > 0 {
+                DispatchQueue.main.async { [weak self, weak scrollView] in
+                    self?.applyViewportRestore(
+                        in: scrollView,
+                        targetTabID: targetTabID,
+                        generation: generation,
+                        anchorLocation: anchorLocation,
+                        anchorOffset: anchorOffset,
+                        fallbackOffset: fallbackOffset,
+                        remainingPasses: remainingPasses - 1
+                    )
+                }
+            } else {
+                isRestoringViewport = false
+                reportViewport()
             }
         }
 
         @objc private func clipViewBoundsChanged() {
+            (textView as? MarkdownTextView)?.redrawVisibleTableBorders()
+            updateEdgeControls()
             reportViewport()
         }
 
         private func reportViewport() {
-            guard !isApplyingStyle, !isApplyingChange, let textView, let scrollView else { return }
+            guard !isApplyingStyle,
+                  !isApplyingChange,
+                  !isRestoringViewport,
+                  let textView,
+                  let scrollView else { return }
+            let anchor = TextViewportPersistence.capture(in: textView, scrollView: scrollView)
             parent.onViewportChange(
                 parent.tabID,
                 .rendered,
                 textView.selectedRange().location,
-                Double(scrollView.contentView.bounds.minY)
+                Double(scrollView.contentView.bounds.minY),
+                anchor?.location,
+                anchor?.offset
             )
         }
 
         func installEdgeControls(in textView: NSTextView) {
-            let controls = TableEdgeControls(target: self)
+            let controls = TableEdgeControls(target: self, language: parent.appLanguage)
             controls.onRowMenu = { [weak self, weak controls, weak textView] point in
                 guard let controls, let textView else { return }
                 self?.showRowMenu(at: textView.convert(point, from: controls))
@@ -2566,6 +2971,7 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
 
         func updateEdgeControls() {
             guard let textView else { return }
+            edgeControls?.appLanguage = parent.appLanguage
             let info = currentTableInfo()
             edgeControls?.update(with: info, in: textView)
             (textView as? MarkdownTextView)?.tableEdgeOverlayInfo = edgeControls == nil ? info : nil
@@ -2694,10 +3100,22 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
             guard let textView, let info = currentTableInfo(), info.rowIndex != nil else { return }
             menuInfo = info
             let menu = NSMenu()
-            menu.addItem(NSMenuItem(title: "上面加一行", action: #selector(insertRowAboveFromMenu), keyEquivalent: ""))
-            menu.addItem(NSMenuItem(title: "下面加一行", action: #selector(insertRowBelowFromMenu), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(
+                title: parent.appLanguage.text("Insert Row Above", "上面加一行"),
+                action: #selector(insertRowAboveFromMenu),
+                keyEquivalent: ""
+            ))
+            menu.addItem(NSMenuItem(
+                title: parent.appLanguage.text("Insert Row Below", "下面加一行"),
+                action: #selector(insertRowBelowFromMenu),
+                keyEquivalent: ""
+            ))
             menu.addItem(.separator())
-            menu.addItem(NSMenuItem(title: "删除此行", action: #selector(deleteRowFromMenu), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(
+                title: parent.appLanguage.text("Delete Row", "删除此行"),
+                action: #selector(deleteRowFromMenu),
+                keyEquivalent: ""
+            ))
             menu.items.forEach { $0.target = self }
             menu.popUp(positioning: nil, at: point, in: textView)
         }
@@ -2706,10 +3124,22 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
             guard let textView, let info = currentTableInfo(), info.columnIndex != nil else { return }
             menuInfo = info
             let menu = NSMenu()
-            menu.addItem(NSMenuItem(title: "左侧加一列", action: #selector(insertColumnLeftFromMenu), keyEquivalent: ""))
-            menu.addItem(NSMenuItem(title: "右侧加一列", action: #selector(insertColumnRightFromMenu), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(
+                title: parent.appLanguage.text("Insert Column Left", "左侧加一列"),
+                action: #selector(insertColumnLeftFromMenu),
+                keyEquivalent: ""
+            ))
+            menu.addItem(NSMenuItem(
+                title: parent.appLanguage.text("Insert Column Right", "右侧加一列"),
+                action: #selector(insertColumnRightFromMenu),
+                keyEquivalent: ""
+            ))
             menu.addItem(.separator())
-            menu.addItem(NSMenuItem(title: "删除此列", action: #selector(deleteColumnFromMenu), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(
+                title: parent.appLanguage.text("Delete Column", "删除此列"),
+                action: #selector(deleteColumnFromMenu),
+                keyEquivalent: ""
+            ))
             menu.items.forEach { $0.target = self }
             menu.popUp(positioning: nil, at: point, in: textView)
         }
@@ -2739,11 +3169,50 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
             return selectedInfo
         }
 
+        func handleMarkdownPaste(_ markdown: String) -> Bool {
+            guard MarkdownPasteClassifier.isLikelyMarkdown(markdown), let textView else {
+                return false
+            }
+
+            let alert = NSAlert()
+            alert.messageText = parent.appLanguage.text("Markdown Source Detected", "检测到 Markdown 源码")
+            alert.informativeText = parent.appLanguage.text(
+                "Convert it to rendered content, or keep the Markdown source as plain text?",
+                "要转换为所见即所得内容，还是保留 Markdown 源码文本？"
+            )
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: parent.appLanguage.text("Convert to Markdown", "转换为 Markdown"))
+            alert.addButton(withTitle: parent.appLanguage.text("Paste Source", "粘贴源码"))
+            alert.addButton(withTitle: parent.appLanguage.text("Cancel", "取消"))
+
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                MarkdownRichText.insertMarkdown(
+                    markdown,
+                    baseURL: parent.documentURL,
+                    in: textView,
+                    replacementRange: textView.selectedRange()
+                )
+            case .alertSecondButtonReturn:
+                preserveMarkdownSourceForNextChange = true
+                textView.insertText(markdown, replacementRange: textView.selectedRange())
+            default:
+                break
+            }
+            return true
+        }
+
         func applySlashCommand(_ command: SlashCommand) {
             guard let textView else { return }
             if command.kind == .image {
                 MarkdownRichText.applySlashCommand(
-                    SlashCommand(title: "正文", detail: "", symbol: "", kind: .paragraph),
+                    SlashCommand(
+                        title: parent.appLanguage.text("Paragraph", "正文"),
+                        detail: "",
+                        symbol: "",
+                        kind: .paragraph,
+                        language: parent.appLanguage
+                    ),
                     in: textView
                 )
                 parent.onRequestImage()
@@ -2795,7 +3264,11 @@ struct RenderedMarkdownEditor: NSViewRepresentable {
             let selectedRanges = textView.selectedRanges
             let editedRange = pendingEditedRange ?? textView.selectedRange()
             pendingEditedRange = nil
-            let shortcutTypingAttributes = MarkdownRichText.consumeMarkdownShortcuts(in: textView, around: editedRange)
+            let shouldConsumeShortcuts = !preserveMarkdownSourceForNextChange
+            preserveMarkdownSourceForNextChange = false
+            let shortcutTypingAttributes = shouldConsumeShortcuts
+                ? MarkdownRichText.consumeMarkdownShortcuts(in: textView, around: editedRange)
+                : nil
             MarkdownRichText.applyDisplayStyles(to: textView, around: editedRange)
             if shortcutTypingAttributes == nil {
                 textView.selectedRanges = selectedRanges
@@ -2870,6 +3343,14 @@ enum MarkdownRichText {
         let columnCount: Int
         let range: NSRange
         let frame: NSRect
+        let borderFrame: NSRect
+    }
+
+    struct TableGridGeometry {
+        let tableID: String
+        let frame: NSRect
+        let columnBoundaries: [CGFloat]
+        let rowBoundaries: [CGFloat]
     }
 
     private enum TableEdgeControlMetrics {
@@ -2906,6 +3387,117 @@ enum MarkdownRichText {
         textView.textStorage?.setAttributedString(attributed)
         applyDisplayStyles(to: textView)
         refreshTypingAttributes(in: textView)
+        (textView as? MarkdownTextView)?.invalidateTableGridGeometry()
+    }
+
+    static func insertMarkdown(
+        _ markdown: String,
+        baseURL: URL?,
+        in textView: NSTextView,
+        replacementRange: NSRange
+    ) {
+        guard let storage = textView.textStorage else { return }
+        let safeLocation = min(max(0, replacementRange.location), storage.length)
+        let safeRange = NSRange(
+            location: safeLocation,
+            length: min(max(0, replacementRange.length), storage.length - safeLocation)
+        )
+        let rendered = parse(markdown: markdown, baseURL: baseURL)
+        guard rendered.length > 0 else { return }
+
+        let insertion = NSMutableAttributedString()
+        let source = storage.string as NSString
+        let isolateAsBlock = MarkdownPasteClassifier.shouldIsolateAsBlock(markdown)
+        if isolateAsBlock,
+           safeRange.location > 0,
+           source.character(at: safeRange.location - 1) != 10 {
+            insertion.append(
+                NSAttributedString(
+                    string: "\n",
+                    attributes: paragraphTerminatorAttributes(
+                        from: storage,
+                        at: safeRange.location - 1
+                    )
+                )
+            )
+        }
+
+        insertion.append(rendered)
+
+        let rangeEnd = NSMaxRange(safeRange)
+        if isolateAsBlock,
+           rangeEnd < storage.length,
+           source.character(at: rangeEnd) != 10 {
+            insertion.append(
+                NSAttributedString(
+                    string: "\n",
+                    attributes: paragraphTerminatorAttributes(
+                        from: rendered,
+                        at: rendered.length - 1
+                    )
+                )
+            )
+        }
+
+        textView.insertText(insertion, replacementRange: safeRange)
+    }
+
+    static func toggleInlineFormat(_ format: MarkdownInlineFormat, in textView: NSTextView) {
+        guard let storage = textView.textStorage else { return }
+        let selection = textView.selectedRange()
+        let safeLocation = min(max(0, selection.location), storage.length)
+        let safeRange = NSRange(
+            location: safeLocation,
+            length: min(max(0, selection.length), storage.length - safeLocation)
+        )
+        let inlineStyle: String
+        switch format {
+        case .bold:
+            inlineStyle = Inline.bold
+        case .strikethrough:
+            inlineStyle = Inline.strikethrough
+        }
+
+        if safeRange.length == 0 {
+            var attributes = textView.typingAttributes
+            if attributes[.markdownBlockStyle] == nil {
+                attributes = typingAttributesFor(style: Block.paragraph)
+            }
+            attributes[.markdownInlineStyle] = inlineStyle
+            let placeholder = format.placeholder
+            textView.insertText(
+                NSAttributedString(string: placeholder, attributes: attributes),
+                replacementRange: safeRange
+            )
+            textView.setSelectedRange(
+                NSRange(location: safeRange.location, length: (placeholder as NSString).length)
+            )
+            return
+        }
+
+        var allFormatted = true
+        storage.enumerateAttribute(.markdownInlineStyle, in: safeRange) { value, _, stop in
+            if value as? String != inlineStyle {
+                allFormatted = false
+                stop.pointee = true
+            }
+        }
+        guard textView.shouldChangeText(in: safeRange, replacementString: nil) else { return }
+
+        storage.beginEditing()
+        storage.removeAttribute(.strikethroughStyle, range: safeRange)
+        storage.removeAttribute(.underlineStyle, range: safeRange)
+        storage.removeAttribute(.underlineColor, range: safeRange)
+        if allFormatted {
+            storage.removeAttribute(.markdownInlineStyle, range: safeRange)
+        } else {
+            storage.addAttribute(.markdownInlineStyle, value: inlineStyle, range: safeRange)
+        }
+        storage.endEditing()
+
+        applyDisplayStyles(to: textView, around: safeRange)
+        textView.setSelectedRange(safeRange)
+        textView.didChangeText()
     }
 
     static func attributedDocument(markdown: String, baseURL: URL? = nil) -> NSAttributedString {
@@ -3099,19 +3691,19 @@ enum MarkdownRichText {
             switch command.kind {
             case .bold:
                 inlineStyle = Inline.bold
-                placeholder = "粗体"
+                placeholder = command.language.text("bold", "粗体")
             case .italic:
                 inlineStyle = Inline.italic
-                placeholder = "斜体"
+                placeholder = command.language.text("italic", "斜体")
             case .strikethrough:
                 inlineStyle = Inline.strikethrough
-                placeholder = "删除线"
+                placeholder = command.language.text("strikethrough", "删除线")
             case .inlineCode:
                 inlineStyle = Inline.code
-                placeholder = "代码"
+                placeholder = command.language.text("code", "代码")
             default:
                 inlineStyle = Inline.link
-                placeholder = "链接文字"
+                placeholder = command.language.text("link text", "链接文字")
                 inlineAttributes[.markdownLinkURL] = "https://"
             }
             inlineAttributes[.markdownInlineStyle] = inlineStyle
@@ -3126,7 +3718,10 @@ enum MarkdownRichText {
             typingAttributes = typingAttributesFor(style: Block.unorderedList)
             var taskAttributes = typingAttributes
             taskAttributes[.markdownTaskState] = "unchecked"
-            replacement = NSAttributedString(string: "☐ 待办事项", attributes: taskAttributes)
+            replacement = NSAttributedString(
+                string: command.language.text("☐ Task", "☐ 待办事项"),
+                attributes: taskAttributes
+            )
         case .quote:
             typingAttributes = typingAttributesFor(style: Block.quote)
             replacement = NSAttributedString(string: "", attributes: typingAttributes)
@@ -3136,7 +3731,10 @@ enum MarkdownRichText {
         case .table:
             typingAttributes = typingAttributesFor(style: Block.paragraph)
             replacement = parse(
-                markdown: "| 标题 1 | 标题 2 |\n| --- | --- |\n| 内容 1 | 内容 2 |",
+                markdown: command.language.text(
+                    "| Header 1 | Header 2 |\n| --- | --- |\n| Content 1 | Content 2 |",
+                    "| 标题 1 | 标题 2 |\n| --- | --- |\n| 内容 1 | 内容 2 |"
+                ),
                 baseURL: nil
             )
         case .rule:
@@ -3944,6 +4542,11 @@ enum MarkdownRichText {
                 frame.origin.x += textView.textContainerOrigin.x
                 frame.origin.y += textView.textContainerOrigin.y
 
+                // `boundsRect(for:at:)` already returns the table block's border box.
+                // Applying NSTextTableBlock margins a second time shifts the first and
+                // last custom grid lines into the cells, creating duplicate outer lines.
+                let borderFrame = frame
+
                 let row = (storage.attribute(.markdownTableRow, at: contentRange.location, effectiveRange: nil) as? NSNumber)?.intValue ?? 0
                 let column = (storage.attribute(.markdownTableColumn, at: contentRange.location, effectiveRange: nil) as? NSNumber)?.intValue ?? 0
                 let columnCount = (storage.attribute(.markdownTableColumnCount, at: contentRange.location, effectiveRange: nil) as? NSNumber)?.intValue ?? 1
@@ -3955,7 +4558,8 @@ enum MarkdownRichText {
                         column: column,
                         columnCount: columnCount,
                         range: contentRange,
-                        frame: frame.integral
+                        frame: frame.integral,
+                        borderFrame: borderFrame
                     )
                 )
             }
@@ -3964,6 +4568,103 @@ enum MarkdownRichText {
         }
 
         return cells
+    }
+
+    static func tableGridGeometries(in textView: NSTextView) -> [TableGridGeometry] {
+        let groupedCells = Dictionary(grouping: tableCellLayouts(in: textView), by: \.tableID)
+        return groupedCells.compactMap { tableID, cells in
+            guard let firstCell = cells.first else { return nil }
+
+            var tableFrame = firstCell.borderFrame
+            for cell in cells.dropFirst() {
+                tableFrame = tableFrame.union(cell.borderFrame)
+            }
+
+            let cellsByColumn = Dictionary(grouping: cells, by: \.column)
+            let orderedColumns = cellsByColumn.keys.sorted()
+            let cellsByRow = Dictionary(grouping: cells, by: \.row)
+            let orderedRows = cellsByRow.keys.sorted()
+            guard !orderedColumns.isEmpty, !orderedRows.isEmpty else { return nil }
+
+            var columnBoundaries = [tableFrame.minX]
+            for (index, column) in orderedColumns.enumerated() {
+                guard let columnCells = cellsByColumn[column] else { continue }
+                if index < orderedColumns.count - 1,
+                   let nextCells = cellsByColumn[orderedColumns[index + 1]] {
+                    let leftEdge = columnCells.map(\.borderFrame.maxX).max() ?? tableFrame.maxX
+                    let rightEdge = nextCells.map(\.borderFrame.minX).min() ?? leftEdge
+                    columnBoundaries.append((leftEdge + rightEdge) / 2)
+                } else {
+                    columnBoundaries.append(tableFrame.maxX)
+                }
+            }
+
+            var rowBoundaries = [tableFrame.minY]
+            for (index, row) in orderedRows.enumerated() {
+                guard let rowCells = cellsByRow[row] else { continue }
+                if index < orderedRows.count - 1,
+                   let nextCells = cellsByRow[orderedRows[index + 1]] {
+                    let upperEdge = rowCells.map(\.borderFrame.maxY).max() ?? tableFrame.maxY
+                    let lowerEdge = nextCells.map(\.borderFrame.minY).min() ?? upperEdge
+                    rowBoundaries.append((upperEdge + lowerEdge) / 2)
+                } else {
+                    rowBoundaries.append(tableFrame.maxY)
+                }
+            }
+
+            return TableGridGeometry(
+                tableID: tableID,
+                frame: tableFrame,
+                columnBoundaries: columnBoundaries,
+                rowBoundaries: rowBoundaries
+            )
+        }
+        .sorted { $0.frame.minY < $1.frame.minY }
+    }
+
+    static func drawContinuousTableGrid(
+        in textView: NSTextView,
+        geometries: [TableGridGeometry],
+        dirtyRect: NSRect
+    ) {
+        let visibleGeometries = geometries.filter { $0.frame.intersects(dirtyRect) }
+        guard !visibleGeometries.isEmpty else { return }
+
+        let scale = max(1, textView.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
+        let lineWidth: CGFloat = 1
+        let physicalLineWidth = max(1, Int((lineWidth * scale).rounded()))
+        let halfPixelAdjustment = physicalLineWidth.isMultiple(of: 2) ? 0 : 0.5 / scale
+        func aligned(_ value: CGFloat) -> CGFloat {
+            (value * scale).rounded() / scale + halfPixelAdjustment
+        }
+
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        NSBezierPath(rect: dirtyRect).addClip()
+        NSColor.separatorColor.withAlphaComponent(0.62).setStroke()
+
+        for geometry in visibleGeometries {
+            let path = NSBezierPath()
+            path.lineWidth = lineWidth
+            path.lineCapStyle = .butt
+            path.lineJoinStyle = .miter
+
+            let minX = aligned(geometry.frame.minX)
+            let maxX = aligned(geometry.frame.maxX)
+            let minY = aligned(geometry.frame.minY)
+            let maxY = aligned(geometry.frame.maxY)
+            for boundary in geometry.columnBoundaries {
+                let x = aligned(boundary)
+                path.move(to: NSPoint(x: x, y: minY))
+                path.line(to: NSPoint(x: x, y: maxY))
+            }
+            for boundary in geometry.rowBoundaries {
+                let y = aligned(boundary)
+                path.move(to: NSPoint(x: minX, y: y))
+                path.line(to: NSPoint(x: maxX, y: y))
+            }
+            path.stroke()
+        }
     }
 
     private static func nearestHorizontalBoundary(
@@ -4117,7 +4818,15 @@ enum MarkdownRichText {
         for rowIndex in rows.indices {
             for columnIndex in 0..<columnCount {
                 if result.length > 0 {
-                    result.append(NSAttributedString(string: "\n"))
+                    result.append(
+                        NSAttributedString(
+                            string: "\n",
+                            attributes: paragraphTerminatorAttributes(
+                                from: result,
+                                at: result.length - 1
+                            )
+                        )
+                    )
                 }
 
                 if rowIndex == selectedRow && columnIndex == selectedColumn {
@@ -4215,7 +4924,15 @@ enum MarkdownRichText {
 
         private mutating func appendLine(_ line: NSAttributedString) {
             if result.length > 0 {
-                result.append(NSAttributedString(string: "\n"))
+                result.append(
+                    NSAttributedString(
+                        string: "\n",
+                        attributes: MarkdownRichText.paragraphTerminatorAttributes(
+                            from: result,
+                            at: result.length - 1
+                        )
+                    )
+                )
             }
             result.append(line)
         }
@@ -4268,7 +4985,9 @@ enum MarkdownRichText {
                 return NSAttributedString(string: code.code, attributes: attributes)
             }
             if markup is Markdown.SoftBreak {
-                return NSAttributedString(string: " ", attributes: attributes)
+                // 段落内单个换行（软换行）必须保留为换行符，否则用户按回车设置的
+                // 换行会在切换标签页、切换编辑模式或重启后重新解析时被折叠成空格。
+                return NSAttributedString(string: "\n", attributes: attributes)
             }
             if markup is Markdown.LineBreak {
                 return NSAttributedString(string: "\n", attributes: attributes)
@@ -4561,6 +5280,27 @@ enum MarkdownRichText {
         index: Int? = nil
     ) -> NSAttributedString {
         NSAttributedString(string: text, attributes: customAttributes(style: style, level: level, index: index))
+    }
+
+    private static func paragraphTerminatorAttributes(
+        from attributed: NSAttributedString,
+        at proposedIndex: Int
+    ) -> [NSAttributedString.Key: Any] {
+        guard attributed.length > 0 else { return [:] }
+        let index = min(max(0, proposedIndex), attributed.length - 1)
+        var attributes = attributed.attributes(at: index, effectiveRange: nil)
+        [
+            NSAttributedString.Key.markdownInlineStyle,
+            .markdownLinkURL,
+            .markdownImageAlt,
+            .markdownImageBlock,
+            .attachment,
+            .link,
+            .underlineStyle,
+            .underlineColor,
+            .strikethroughStyle
+        ].forEach { attributes.removeValue(forKey: $0) }
+        return attributes
     }
 
     private static func tableCellAttributedString(
@@ -5166,6 +5906,7 @@ private extension NSRect {
 @MainActor
 private enum MarkdownSelfTest {
     static func run() {
+        testLanguageDefaultsAndTranslations()
         testHeadingMarkdownRendersWithoutSourceMarker()
         testRenderedHeadingShortcutConsumesHashMarker()
         testSlashCommandAppliesHeadingStyle()
@@ -5187,14 +5928,47 @@ private enum MarkdownSelfTest {
         testFullWidthLayoutToggle()
         testHeadingSpacing()
         testCommonMarkdownRoundTrip()
+        testSoftBreakPreservesLineBreak()
+        testMarkdownPasteDetectionAndConversion()
+        testInlineFormattingCommands()
         testGitHubMarkdownFeaturesRender()
+        testTableParagraphTerminators()
         testTableEditingCommands()
         testTableEditingPreservesFollowingBlocks()
         testTableFloatingControlFrame()
         testTableEdgeHoverControls()
         testSelectedTableShowsEdgeControls()
         testSelectedTableControlsAreActionable()
+        MadedownUpdateLogic.runSelfTests()
         print("Madedown self-test passed")
+    }
+
+    private static func testLanguageDefaultsAndTranslations() {
+        let suiteName = "Madedown.LocalizationSelfTest.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            preconditionFailure("A temporary preferences suite should be available")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        precondition(
+            AppLanguage.persisted(in: defaults) == .english,
+            "English must be the default language when no preference exists"
+        )
+        AppLanguage.simplifiedChinese.persist(in: defaults)
+        precondition(
+            AppLanguage.persisted(in: defaults) == .simplifiedChinese,
+            "The selected language must persist independently from the document session"
+        )
+        precondition(
+            AppLanguage.english.text("Language", "语言") == "Language" &&
+                AppLanguage.simplifiedChinese.text("Language", "语言") == "语言",
+            "Representative UI strings must resolve in both supported languages"
+        )
+        precondition(
+            SlashCommand.commands(for: .english).first?.title == "Paragraph" &&
+                SlashCommand.commands(for: .simplifiedChinese).first?.title == "正文",
+            "Slash commands must follow the selected language"
+        )
     }
 
     private static func testSlashCommandAppliesHeadingStyle() {
@@ -5214,14 +5988,15 @@ private enum MarkdownSelfTest {
     }
 
     private static func testExpandedSlashCommands() {
+        let commands = SlashCommand.commands(for: .simplifiedChinese)
         precondition(
-            SlashCommand.commands.contains(where: { $0.kind == .heading(6) }),
+            commands.contains(where: { $0.kind == .heading(6) }),
             "Slash commands should expose all six heading levels"
         )
         precondition(
-            SlashCommand.commands.contains(where: { $0.kind == .table }) &&
-                SlashCommand.commands.contains(where: { $0.kind == .taskList }) &&
-                SlashCommand.commands.contains(where: { $0.kind == .strikethrough }),
+            commands.contains(where: { $0.kind == .table }) &&
+                commands.contains(where: { $0.kind == .taskList }) &&
+                commands.contains(where: { $0.kind == .strikethrough }),
             "Slash commands should cover common block and inline Markdown formats"
         )
 
@@ -5234,7 +6009,7 @@ private enum MarkdownSelfTest {
             let textView = MarkdownTextView()
             textView.string = "/"
             textView.setSelectedRange(NSRange(location: 1, length: 0))
-            let command = SlashCommand.commands.first { $0.kind == kind }!
+            let command = commands.first { $0.kind == kind }!
             MarkdownRichText.applySlashCommand(command, in: textView)
             let serialized = MarkdownRichText.serialize(textView.attributedString())
             precondition(serialized.contains(expectedMarkdown), "Expanded slash command should serialize as Markdown")
@@ -5315,6 +6090,7 @@ private enum MarkdownSelfTest {
         """
         let decoded = try! JSONDecoder().decode(MarkdownDocumentTab.self, from: Data(legacyJSON.utf8))
         precondition(decoded.sourceCaretLocation == nil, "Older sessions should decode without viewport fields")
+        precondition(decoded.renderedVisibleAnchorLocation == nil, "Older sessions should decode without viewport anchors")
         precondition(decoded.markdown == "# Legacy", "Older session content should remain intact")
     }
 
@@ -5334,13 +6110,17 @@ private enum MarkdownSelfTest {
             tabID: firstStore.activeTabID,
             mode: .source,
             caretLocation: 42,
-            scrollOffset: 320
+            scrollOffset: 320,
+            visibleAnchorLocation: 36,
+            visibleAnchorOffset: 7.5
         )
         firstStore.updateViewport(
             tabID: firstStore.activeTabID,
             mode: .rendered,
             caretLocation: 17,
-            scrollOffset: 180
+            scrollOffset: 180,
+            visibleAnchorLocation: 12,
+            visibleAnchorOffset: 3.25
         )
         firstStore.mode = .source
         precondition(firstStore.activeTab?.isDirty == false, "Viewport changes must not mark document content dirty")
@@ -5349,11 +6129,21 @@ private enum MarkdownSelfTest {
         let restoredStore = MarkdownStore()
         precondition(restoredStore.mode == .rendered, "Every app launch should begin in rendered mode")
         precondition(
-            restoredStore.viewport(for: .source) == EditorViewport(caretLocation: 42, scrollOffset: 320),
+            restoredStore.viewport(for: .source) == EditorViewport(
+                caretLocation: 42,
+                scrollOffset: 320,
+                visibleAnchorLocation: 36,
+                visibleAnchorOffset: 7.5
+            ),
             "Source viewport should survive session restoration"
         )
         precondition(
-            restoredStore.viewport(for: .rendered) == EditorViewport(caretLocation: 17, scrollOffset: 180),
+            restoredStore.viewport(for: .rendered) == EditorViewport(
+                caretLocation: 17,
+                scrollOffset: 180,
+                visibleAnchorLocation: 12,
+                visibleAnchorOffset: 3.25
+            ),
             "Rendered viewport should survive session restoration"
         )
     }
@@ -5639,6 +6429,96 @@ private enum MarkdownSelfTest {
         )
     }
 
+    private static func testSoftBreakPreservesLineBreak() {
+        let markdown = "第一行\n第二行"
+        let textView = NSTextView()
+        MarkdownRichText.load(markdown: markdown, into: textView)
+
+        precondition(
+            textView.string == markdown,
+            "Single-newline paragraphs should keep their visible line break in the rendered editor"
+        )
+        precondition(
+            MarkdownRichText.serialize(textView.attributedString()) == markdown,
+            "Soft break line breaks should survive render/serialize round trips"
+        )
+    }
+
+    private static func testMarkdownPasteDetectionAndConversion() {
+        precondition(
+            MarkdownPasteClassifier.isLikelyMarkdown("# 粘贴标题\n\n- 第一项"),
+            "Block Markdown pasted into the rendered editor should be detected"
+        )
+        precondition(
+            MarkdownPasteClassifier.isLikelyMarkdown("| A | B |\n| --- | --- |\n| 1 | 2 |"),
+            "Markdown tables should be detected on paste"
+        )
+        precondition(
+            MarkdownPasteClassifier.isLikelyMarkdown("复制 **粗体** 内容"),
+            "Inline Markdown should be detected on paste"
+        )
+        precondition(
+            MarkdownPasteClassifier.isLikelyMarkdown("**字**"),
+            "Single-character inline Markdown should be detected on paste"
+        )
+        precondition(
+            !MarkdownPasteClassifier.isLikelyMarkdown("这是一段普通文本，不需要转换。"),
+            "Ordinary prose should paste without an unnecessary prompt"
+        )
+
+        let textView = NSTextView()
+        MarkdownRichText.load(markdown: "粘贴之前", into: textView)
+        textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+        MarkdownRichText.insertMarkdown(
+            "# 粘贴标题\n\n- 第一项",
+            baseURL: nil,
+            in: textView,
+            replacementRange: textView.selectedRange()
+        )
+        let serialized = MarkdownRichText.serialize(textView.attributedString())
+        precondition(serialized.contains("# 粘贴标题"), "Converted paste should render and retain headings")
+        precondition(serialized.contains("- 第一项"), "Converted paste should render and retain lists")
+    }
+
+    private static func testInlineFormattingCommands() {
+        let textView = NSTextView()
+        MarkdownRichText.load(markdown: "格式文字", into: textView)
+        textView.setSelectedRange(NSRange(location: 0, length: textView.string.utf16.count))
+
+        MarkdownRichText.toggleInlineFormat(.bold, in: textView)
+        precondition(
+            MarkdownRichText.serialize(textView.attributedString()) == "**格式文字**",
+            "Command-B should apply bold Markdown to the selection"
+        )
+
+        MarkdownRichText.toggleInlineFormat(.bold, in: textView)
+        precondition(
+            MarkdownRichText.serialize(textView.attributedString()) == "格式文字",
+            "Command-B should remove bold Markdown when the selection is already bold"
+        )
+
+        MarkdownRichText.toggleInlineFormat(.strikethrough, in: textView)
+        precondition(
+            MarkdownRichText.serialize(textView.attributedString()) == "~~格式文字~~",
+            "Command-Shift-X should apply strikethrough Markdown to the selection"
+        )
+
+        let sourceTextView = SourceMarkdownTextView()
+        sourceTextView.string = "源码文字"
+        sourceTextView.setSelectedRange(NSRange(location: 0, length: sourceTextView.string.utf16.count))
+        MarkdownEditorCommandCenter.shared.activate(sourceTextView)
+        MarkdownEditorCommandCenter.shared.toggleInlineFormat(.bold)
+        precondition(
+            sourceTextView.string == "**源码文字**",
+            "Command-B should wrap the source editor selection with Markdown markers"
+        )
+        MarkdownEditorCommandCenter.shared.toggleInlineFormat(.bold)
+        precondition(
+            sourceTextView.string == "源码文字",
+            "Command-B should remove surrounding source markers when toggled again"
+        )
+    }
+
     private static func testGitHubMarkdownFeaturesRender() {
         let textView = NSTextView()
         MarkdownRichText.load(
@@ -5683,6 +6563,77 @@ private enum MarkdownSelfTest {
         precondition(markdown.contains("~~删除线~~"), "Strikethrough should serialize back to Markdown")
         precondition(markdown.contains("- [x] 已完成"), "Checked task should serialize back to Markdown")
         precondition(markdown.contains("| A | B |"), "Table should serialize back to Markdown")
+    }
+
+    private static func testTableParagraphTerminators() {
+        let textView = NSTextView()
+        MarkdownRichText.load(
+            markdown: "| A | B |\n| --- | --- |\n| 1 | 2 |",
+            into: textView
+        )
+
+        let attributed = textView.attributedString()
+        let string = attributed.string as NSString
+        let firstCell = string.range(of: "A")
+        let firstTerminator = NSMaxRange(firstCell)
+        precondition(
+            firstTerminator < attributed.length && string.character(at: firstTerminator) == 10,
+            "Rendered table cells should end with a paragraph terminator"
+        )
+        let cellTableID = attributed.attribute(.markdownTableID, at: firstCell.location, effectiveRange: nil) as? String
+        let terminatorTableID = attributed.attribute(.markdownTableID, at: firstTerminator, effectiveRange: nil) as? String
+        let terminatorStyle = attributed.attribute(.paragraphStyle, at: firstTerminator, effectiveRange: nil) as? NSParagraphStyle
+        precondition(
+            cellTableID != nil && terminatorTableID == cellTableID,
+            "Table paragraph terminators must retain their table identity so adjacent cells stay connected"
+        )
+        precondition(
+            terminatorStyle?.textBlocks.contains { $0 is NSTextTableBlock } == true,
+            "Table paragraph terminators must retain the native table block layout"
+        )
+
+        let gridTextView = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 720, height: 480))
+        gridTextView.textContainer?.containerSize = NSSize(width: 700, height: CGFloat.greatestFiniteMagnitude)
+        MarkdownRichText.load(markdown: "| A | B |\n| --- | --- |\n| 1 | 2 |", into: gridTextView)
+        let grids = MarkdownRichText.tableGridGeometries(in: gridTextView)
+        precondition(grids.count == 1, "A rendered table should produce one continuous grid")
+        precondition(grids[0].columnBoundaries.count == 3, "A two-column table needs three continuous vertical borders")
+        precondition(grids[0].rowBoundaries.count == 3, "A two-row table needs three continuous horizontal borders")
+        precondition(
+            zip(grids[0].rowBoundaries, grids[0].rowBoundaries.dropFirst()).allSatisfy(<),
+            "Continuous table row borders must remain strictly ordered"
+        )
+        let gridStorage = gridTextView.textStorage!
+        let gridLayout = gridTextView.layoutManager!
+        let gridContainer = gridTextView.textContainer!
+        gridLayout.ensureLayout(for: gridContainer)
+        func nativeBorderFrame(at location: Int) -> NSRect {
+            let style = gridStorage.attribute(.paragraphStyle, at: location, effectiveRange: nil) as! NSParagraphStyle
+            let block = style.textBlocks.compactMap { $0 as? NSTextTableBlock }.last!
+            let glyph = gridLayout.glyphIndexForCharacter(at: location)
+            var frame = gridLayout.boundsRect(for: block, at: glyph, effectiveRange: nil)
+            frame.origin.x += gridTextView.textContainerOrigin.x
+            frame.origin.y += gridTextView.textContainerOrigin.y
+            return frame
+        }
+        let firstNativeBorder = nativeBorderFrame(at: (gridTextView.string as NSString).range(of: "A").location)
+        let lastNativeBorder = nativeBorderFrame(at: (gridTextView.string as NSString).range(of: "2", options: .backwards).location)
+        precondition(
+            abs(grids[0].frame.minY - firstNativeBorder.minY) < 0.5 &&
+                abs(grids[0].frame.maxY - lastNativeBorder.maxY) < 0.5,
+            "The continuous grid must use the native border box without reapplying table margins"
+        )
+
+        textView.setSelectedRange(NSRange(location: firstCell.location, length: 0))
+        MarkdownRichText.insertTableRowBelow(in: textView)
+        let editedAttributed = textView.attributedString()
+        let editedString = editedAttributed.string as NSString
+        let editedFirstCell = editedString.range(of: "A")
+        let editedTerminator = NSMaxRange(editedFirstCell)
+        precondition(
+            editedAttributed.attribute(.markdownTableID, at: editedTerminator, effectiveRange: nil) as? String != nil,
+            "Rebuilt tables must preserve table attributes on paragraph terminators"
+        )
     }
 
     private static func testTableEditingCommands() {
