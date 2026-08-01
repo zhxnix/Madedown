@@ -1,6 +1,6 @@
-# Madedown 1.3.0 更新预告：智能粘贴、中英界面与在线更新
+# Madedown 1.3.0：智能粘贴、中英界面与在线更新
 
-[English](UPDATE_ANNOUNCEMENT_1.3.0.md) | **简体中文**
+[English](https://github.com/zhxnix/Madedown/blob/v1.3.0/Docs/UPDATE_ANNOUNCEMENT_1.3.0.md) | **简体中文**
 
 Madedown 1.3.0 把重点放在“写起来更顺”和“长期使用更省心”上。这一版补齐了 Markdown 智能粘贴、常用格式快捷键、中英界面和 GitHub 原位更新，也集中修复了表格、标签视口、深色模式和界面一致性问题。
 
@@ -60,3 +60,9 @@ Madedown 1.3.0 把重点放在“写起来更顺”和“长期使用更省心�
 本次更新继续保持原生 Swift / AppKit / SwiftUI 架构，没有增加常驻后台进程。更新助手只在用户确认安装后短暂运行。自动化回归新增语言默认值和代表性翻译，并继续覆盖智能粘贴、格式切换、表格布局和边框几何、标签视口锚点、语义版本、安装包选择、不安全地址拦截、应用校验，以及带回滚的原位替换事务。
 
 Madedown 仍支持 macOS 13 及以上版本。当前开源构建使用 ad-hoc 签名且未经过 Apple 公证，首次安装时 macOS 仍可能要求在“隐私与安全性”中确认。
+
+## 下载
+
+从 GitHub Releases 下载 `Madedown-1.3.0.dmg`，再将 `Madedown.app` 拖入“应用程序”。
+
+SHA-256：`b2e7dd7b0b127561de17d2505abde203b8b0a7ed36f9f03dc2abf8d13ef3c2fc`

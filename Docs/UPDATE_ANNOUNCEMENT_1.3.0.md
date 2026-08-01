@@ -1,6 +1,6 @@
-# Madedown 1.3.0 Preview: Smarter Pasting, Bilingual UI, and In-App Updates
+# Madedown 1.3.0: Smarter Pasting, Bilingual UI, and In-App Updates
 
-**English** | [简体中文](UPDATE_ANNOUNCEMENT_1.3.0.zh-CN.md)
+**English** | [简体中文](https://github.com/zhxnix/Madedown/blob/v1.3.0/Docs/UPDATE_ANNOUNCEMENT_1.3.0.zh-CN.md)
 
 Madedown 1.3.0 focuses on making everyday writing smoother and long-term maintenance safer. It adds smart Markdown paste, common formatting shortcuts, English/Chinese UI switching, and GitHub-powered in-place updates while tightening tables, tab restoration, dark-mode appearance, and interface consistency.
 
@@ -60,3 +60,9 @@ Network access occurs only after a manual update check, and installers must use 
 The release remains native Swift/AppKit/SwiftUI and adds no resident background process. The update helper runs only after installation is confirmed. Automated regressions cover localization defaults and representative translations, smart paste, formatting toggles, table layout and border geometry, viewport anchors, semantic versions, installer selection, unsafe URL rejection, app validation, and transactional replacement with rollback.
 
 Madedown continues to support macOS 13 and later. Open-source builds use ad-hoc signing and are not Apple-notarized, so macOS may still require confirmation in Privacy & Security on first launch.
+
+## Download
+
+Download `Madedown-1.3.0.dmg` from GitHub Releases and drag `Madedown.app` into Applications.
+
+SHA-256: `b2e7dd7b0b127561de17d2505abde203b8b0a7ed36f9f03dc2abf8d13ef3c2fc`
