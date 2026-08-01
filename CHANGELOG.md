@@ -6,6 +6,8 @@ This project follows the basic structure of [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-02
+
 ### Added
 
 - The rendered editor now offers **Convert to Markdown**, **Paste Source**, and **Cancel** when pasted text looks like Markdown source.

@@ -1,4 +1,4 @@
-# Madedown（玛德蛋）
+# Madedown
 
 [English](README.md) | **简体中文**
 
@@ -11,8 +11,6 @@
 </p>
 
 一个轻量、免费、开源的原生 macOS Markdown 编辑器。默认提供可直接编辑的实时渲染界面，也可以随时切换到 Markdown 源码。
-
-> 名字读作 **“玛德蛋”**（Madedown），不是“美德蛋”。这是项目的正式中文读音。
 
 ## 为什么做 Madedown
 

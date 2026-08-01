@@ -20,8 +20,6 @@ I missed the simple, direct, open-and-write feel of the Windows 11 text editor o
 
 Madedown is not trying to become a knowledge base or project-management suite. It focuses on one job: open a Markdown file on your Mac and make writing pleasant.
 
-The name is officially pronounced like the Chinese phrase **“玛德蛋”**.
-
 ## Highlights
 
 - Native Swift, AppKit, and SwiftUI for quick startup and modest resource use
