@@ -1,21 +1,26 @@
-name: 功能建议
-description: 建议一个符合轻量编辑器定位的改进
+name: Feature request
+description: Suggest an improvement that fits a lightweight editor
 title: "[Feature]: "
 labels: [enhancement]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Please write the request in English first.
+        You may add a Simplified Chinese translation in a collapsible `<details>` section.
   - type: textarea
     id: problem
     attributes:
-      label: 想解决什么问题？
+      label: What problem should this solve?
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: 你期待怎样的交互？
+      label: What interaction do you expect?
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
-      label: 考虑过哪些替代方案？
+      label: What alternatives have you considered?

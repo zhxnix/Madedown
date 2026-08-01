@@ -119,29 +119,67 @@ struct SlashCommand: Equatable {
     let detail: String
     let symbol: String
     let kind: Kind
+    let language: AppLanguage
 
-    static let commands: [SlashCommand] = [
-        SlashCommand(title: "正文", detail: "普通文本", symbol: "text.alignleft", kind: .paragraph),
-        SlashCommand(title: "一级标题", detail: "# 标题", symbol: "textformat.size.larger", kind: .heading(1)),
-        SlashCommand(title: "二级标题", detail: "## 标题", symbol: "textformat.size", kind: .heading(2)),
-        SlashCommand(title: "三级标题", detail: "### 标题", symbol: "textformat", kind: .heading(3)),
-        SlashCommand(title: "四级标题", detail: "#### 标题", symbol: "textformat", kind: .heading(4)),
-        SlashCommand(title: "五级标题", detail: "##### 标题", symbol: "textformat", kind: .heading(5)),
-        SlashCommand(title: "六级标题", detail: "###### 标题", symbol: "textformat", kind: .heading(6)),
-        SlashCommand(title: "粗体", detail: "**粗体**", symbol: "bold", kind: .bold),
-        SlashCommand(title: "斜体", detail: "*斜体*", symbol: "italic", kind: .italic),
-        SlashCommand(title: "删除线", detail: "~~删除线~~", symbol: "strikethrough", kind: .strikethrough),
-        SlashCommand(title: "行内代码", detail: "`代码`", symbol: "chevron.left.forwardslash.chevron.right", kind: .inlineCode),
-        SlashCommand(title: "链接", detail: "[文字](网址)", symbol: "link", kind: .link),
-        SlashCommand(title: "无序列表", detail: "- 列表项", symbol: "list.bullet", kind: .unorderedList),
-        SlashCommand(title: "有序列表", detail: "1. 列表项", symbol: "list.number", kind: .orderedList),
-        SlashCommand(title: "任务列表", detail: "- [ ] 待办", symbol: "checklist", kind: .taskList),
-        SlashCommand(title: "引用", detail: "> 引用内容", symbol: "text.quote", kind: .quote),
-        SlashCommand(title: "代码块", detail: "```", symbol: "chevron.left.forwardslash.chevron.right", kind: .code),
-        SlashCommand(title: "表格", detail: "2 列表格", symbol: "tablecells", kind: .table),
-        SlashCommand(title: "分割线", detail: "---", symbol: "minus", kind: .rule),
-        SlashCommand(title: "图片", detail: "选择并直接显示", symbol: "photo", kind: .image)
-    ]
+    init(
+        title: String,
+        detail: String,
+        symbol: String,
+        kind: Kind,
+        language: AppLanguage = .current
+    ) {
+        self.title = title
+        self.detail = detail
+        self.symbol = symbol
+        self.kind = kind
+        self.language = language
+    }
+
+    static var commands: [SlashCommand] {
+        commands(for: .current)
+    }
+
+    static func commands(for language: AppLanguage) -> [SlashCommand] {
+        func command(
+            _ englishTitle: String,
+            _ chineseTitle: String,
+            _ englishDetail: String,
+            _ chineseDetail: String,
+            symbol: String,
+            kind: Kind
+        ) -> SlashCommand {
+            SlashCommand(
+                title: language.text(englishTitle, chineseTitle),
+                detail: language.text(englishDetail, chineseDetail),
+                symbol: symbol,
+                kind: kind,
+                language: language
+            )
+        }
+
+        return [
+            command("Paragraph", "正文", "Plain text", "普通文本", symbol: "text.alignleft", kind: .paragraph),
+            command("Heading 1", "一级标题", "# Heading", "# 标题", symbol: "textformat.size.larger", kind: .heading(1)),
+            command("Heading 2", "二级标题", "## Heading", "## 标题", symbol: "textformat.size", kind: .heading(2)),
+            command("Heading 3", "三级标题", "### Heading", "### 标题", symbol: "textformat", kind: .heading(3)),
+            command("Heading 4", "四级标题", "#### Heading", "#### 标题", symbol: "textformat", kind: .heading(4)),
+            command("Heading 5", "五级标题", "##### Heading", "##### 标题", symbol: "textformat", kind: .heading(5)),
+            command("Heading 6", "六级标题", "###### Heading", "###### 标题", symbol: "textformat", kind: .heading(6)),
+            command("Bold", "粗体", "**bold**", "**粗体**", symbol: "bold", kind: .bold),
+            command("Italic", "斜体", "*italic*", "*斜体*", symbol: "italic", kind: .italic),
+            command("Strikethrough", "删除线", "~~strikethrough~~", "~~删除线~~", symbol: "strikethrough", kind: .strikethrough),
+            command("Inline Code", "行内代码", "`code`", "`代码`", symbol: "chevron.left.forwardslash.chevron.right", kind: .inlineCode),
+            command("Link", "链接", "[text](URL)", "[文字](网址)", symbol: "link", kind: .link),
+            command("Bulleted List", "无序列表", "- List item", "- 列表项", symbol: "list.bullet", kind: .unorderedList),
+            command("Numbered List", "有序列表", "1. List item", "1. 列表项", symbol: "list.number", kind: .orderedList),
+            command("Task List", "任务列表", "- [ ] Task", "- [ ] 待办", symbol: "checklist", kind: .taskList),
+            command("Quote", "引用", "> Quoted text", "> 引用内容", symbol: "text.quote", kind: .quote),
+            command("Code Block", "代码块", "```", "```", symbol: "chevron.left.forwardslash.chevron.right", kind: .code),
+            command("Table", "表格", "2-column table", "2 列表格", symbol: "tablecells", kind: .table),
+            command("Divider", "分割线", "---", "---", symbol: "minus", kind: .rule),
+            command("Image", "图片", "Choose and display", "选择并直接显示", symbol: "photo", kind: .image)
+        ]
+    }
 
     var sourceTemplate: (text: String, caretOffset: Int) {
         switch kind {
@@ -151,15 +189,15 @@ struct SlashCommand: Equatable {
             let text = String(repeating: "#", count: level) + " "
             return (text, (text as NSString).length)
         case .bold:
-            return ("**粗体**", 2)
+            return ("**\(language.text("bold", "粗体"))**", 2)
         case .italic:
-            return ("*斜体*", 1)
+            return ("*\(language.text("italic", "斜体"))*", 1)
         case .strikethrough:
-            return ("~~删除线~~", 2)
+            return ("~~\(language.text("strikethrough", "删除线"))~~", 2)
         case .inlineCode:
-            return ("`代码`", 1)
+            return ("`\(language.text("code", "代码"))`", 1)
         case .link:
-            return ("[链接文字](https://)", 1)
+            return ("[\(language.text("link text", "链接文字"))](https://)", 1)
         case .unorderedList:
             return ("- ", 2)
         case .orderedList:
@@ -171,12 +209,92 @@ struct SlashCommand: Equatable {
         case .code:
             return ("```\n\n```", 4)
         case .table:
-            return ("| 标题 1 | 标题 2 |\n| --- | --- |\n| 内容 1 | 内容 2 |", 2)
+            let text = language.text(
+                "| Header 1 | Header 2 |\n| --- | --- |\n| Content 1 | Content 2 |",
+                "| 标题 1 | 标题 2 |\n| --- | --- |\n| 内容 1 | 内容 2 |"
+            )
+            return (text, 2)
         case .rule:
             return ("---", 3)
         case .image:
             return ("", 0)
         }
+    }
+}
+
+enum MarkdownInlineFormat {
+    case bold
+    case strikethrough
+
+    var sourceMarker: String {
+        switch self {
+        case .bold:
+            return "**"
+        case .strikethrough:
+            return "~~"
+        }
+    }
+
+    var placeholder: String {
+        switch self {
+        case .bold:
+            return MadedownL10n.text("bold", "粗体")
+        case .strikethrough:
+            return MadedownL10n.text("strikethrough", "删除线")
+        }
+    }
+}
+
+enum MarkdownPasteClassifier {
+    static func isLikelyMarkdown(_ text: String) -> Bool {
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+        let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 3 else { return false }
+
+        let blockPatterns = [
+            #"(?m)^ {0,3}#{1,6}[\t ]+\S"#,
+            #"(?m)^\s*(?:[-+*][\t ]+(?:\[[ xX]\][\t ]+)?|\d+[.)][\t ]+)\S"#,
+            #"(?m)^ {0,3}>[\t ]+\S"#,
+            #"(?m)^\s*(?:```|~~~)"#,
+            #"(?m)^ {0,3}(?:[-*_][\t ]*){3,}$"#
+        ]
+        if blockPatterns.contains(where: { matches($0, in: normalized) }) {
+            return true
+        }
+
+        let lines = normalized.components(separatedBy: "\n")
+        if lines.indices.dropLast().contains(where: { index in
+            lines[index].contains("|") &&
+                matches(#"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$"#, in: lines[index + 1])
+        }) {
+            return true
+        }
+
+        let inlinePatterns = [
+            #"!\[[^\]\n]*\]\([^\)\n]+\)"#,
+            #"\[[^\]\n]+\]\([^\)\n]+\)"#,
+            #"(?s)\*\*(?=\S).+?(?<=\S)\*\*"#,
+            #"(?s)__(?=\S).+?(?<=\S)__"#,
+            #"(?s)~~(?=\S).+?(?<=\S)~~"#,
+            #"`[^`\n]+`"#
+        ]
+        return inlinePatterns.contains(where: { matches($0, in: normalized) })
+    }
+
+    static func shouldIsolateAsBlock(_ text: String) -> Bool {
+        text.contains("\n") || [
+            #"^ {0,3}#{1,6}[\t ]+"#,
+            #"^\s*(?:[-+*][\t ]+|\d+[.)][\t ]+|>[\t ]+|```|~~~)"#,
+            #"^\s*\|"#
+        ].contains(where: { matches($0, in: text) })
+    }
+
+    private static func matches(_ pattern: String, in text: String) -> Bool {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return false }
+        return expression.firstMatch(
+            in: text,
+            range: NSRange(location: 0, length: (text as NSString).length)
+        ) != nil
     }
 }
 
@@ -247,12 +365,59 @@ final class MarkdownEditorCommandCenter {
         item.tag = action.rawValue
         activeTextView.performTextFinderAction(item)
     }
+
+    func toggleInlineFormat(_ format: MarkdownInlineFormat) {
+        guard let activeTextView else { return }
+        activeTextView.window?.makeFirstResponder(activeTextView)
+
+        if activeTextView is MarkdownTextView {
+            MarkdownRichText.toggleInlineFormat(format, in: activeTextView)
+        } else {
+            toggleSourceInlineFormat(format, in: activeTextView)
+        }
+    }
+
+    private func toggleSourceInlineFormat(_ format: MarkdownInlineFormat, in textView: NSTextView) {
+        let marker = format.sourceMarker
+        let markerLength = (marker as NSString).length
+        let selection = textView.selectedRange()
+        let source = textView.string as NSString
+
+        if selection.length > 0,
+           selection.location >= markerLength,
+           NSMaxRange(selection) + markerLength <= source.length {
+            let leadingRange = NSRange(location: selection.location - markerLength, length: markerLength)
+            let trailingRange = NSRange(location: NSMaxRange(selection), length: markerLength)
+            if source.substring(with: leadingRange) == marker,
+               source.substring(with: trailingRange) == marker {
+                let selectedText = source.substring(with: selection)
+                let outerRange = NSRange(
+                    location: leadingRange.location,
+                    length: markerLength + selection.length + markerLength
+                )
+                textView.insertText(selectedText, replacementRange: outerRange)
+                textView.setSelectedRange(NSRange(location: outerRange.location, length: selection.length))
+                return
+            }
+        }
+
+        let selectedText = selection.length > 0
+            ? source.substring(with: selection)
+            : format.placeholder
+        let replacement = marker + selectedText + marker
+        textView.insertText(replacement, replacementRange: selection)
+        textView.setSelectedRange(
+            NSRange(location: selection.location + markerLength, length: (selectedText as NSString).length)
+        )
+    }
 }
 
 @MainActor
 class SlashCommandTextView: NSTextView {
+    var appLanguage = AppLanguage.current
     var onSlashCommand: ((SlashCommand) -> Void)?
     var onPasteImages: ((NSPasteboard) -> Bool)?
+    var onPasteMarkdownText: ((String) -> Bool)?
     var onDropImageFiles: (([URL]) -> Bool)?
     private var slashMenuController: SlashCommandMenuController?
     var isSlashMenuPresented: Bool { slashMenuController != nil }
@@ -290,6 +455,10 @@ class SlashCommandTextView: NSTextView {
 
     override func paste(_ sender: Any?) {
         if onPasteImages?(NSPasteboard.general) == true {
+            return
+        }
+        if let pastedText = NSPasteboard.general.string(forType: .string),
+           onPasteMarkdownText?(pastedText) == true {
             return
         }
         super.paste(sender)
@@ -363,7 +532,10 @@ class SlashCommandTextView: NSTextView {
 
     private func showSlashMenu() {
         guard let triggerRange = slashTriggerRange() else { return }
-        let controller = SlashCommandMenuController(textView: self) { [weak self] command in
+        let controller = SlashCommandMenuController(
+            textView: self,
+            commands: SlashCommand.commands(for: appLanguage)
+        ) { [weak self] command in
             guard let self else { return }
             self.slashMenuController = nil
             self.window?.makeFirstResponder(self)
@@ -396,12 +568,14 @@ private final class SlashCommandMenuController: NSObject {
     private weak var textView: NSTextView?
     private let panel: NSPanel
     private let buttons: [NSButton]
+    private let commands: [SlashCommand]
     private let onSelect: (SlashCommand) -> Void
     private var selectedIndex = 0
     let columnCount = 2
 
-    init(textView: NSTextView, onSelect: @escaping (SlashCommand) -> Void) {
+    init(textView: NSTextView, commands: [SlashCommand], onSelect: @escaping (SlashCommand) -> Void) {
         self.textView = textView
+        self.commands = commands
         self.onSelect = onSelect
 
         let effectView = NSVisualEffectView()
@@ -428,7 +602,7 @@ private final class SlashCommandMenuController: NSObject {
 
         var createdButtons: [NSButton] = []
         var currentRow: [NSView] = []
-        for (index, command) in SlashCommand.commands.enumerated() {
+        for (index, command) in commands.enumerated() {
             let button = NSButton(title: "", target: nil, action: nil)
             button.tag = index
             button.isBordered = false
@@ -457,7 +631,7 @@ private final class SlashCommandMenuController: NSObject {
         }
         buttons = createdButtons
 
-        let rowCount = Int(ceil(Double(SlashCommand.commands.count) / Double(columnCount)))
+        let rowCount = Int(ceil(Double(commands.count) / Double(columnCount)))
 
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 500, height: CGFloat(rowCount * 33 + 14)),
@@ -505,7 +679,7 @@ private final class SlashCommandMenuController: NSObject {
     }
 
     func moveSelection(by offset: Int) {
-        let count = SlashCommand.commands.count
+        let count = commands.count
         selectedIndex = (selectedIndex + offset + count) % count
         updateSelectionAppearance()
     }
@@ -519,8 +693,8 @@ private final class SlashCommandMenuController: NSObject {
     }
 
     private func choose(index: Int) {
-        guard SlashCommand.commands.indices.contains(index) else { return }
-        let command = SlashCommand.commands[index]
+        guard commands.indices.contains(index) else { return }
+        let command = commands[index]
         dismiss()
         onSelect(command)
     }

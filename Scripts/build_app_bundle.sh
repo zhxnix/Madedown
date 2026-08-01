@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/dist/Madedown.app"
 LEGACY_APP_DIR="$ROOT_DIR/dist/MarkdownNotepad.app"
 EXECUTABLE="$ROOT_DIR/.build/release/Madedown"
+UPDATER_HELPER="$ROOT_DIR/.build/release/MadedownUpdaterHelper"
 APP_ICON="$ROOT_DIR/Assets/Logo/madedown-app-icon.png"
 TITLEBAR_WORDMARK="$ROOT_DIR/Assets/Logo/madedown-titlebar-wordmark.png"
 ICONSET_DIR="$ROOT_DIR/.build/Madedown.iconset"
@@ -40,12 +41,15 @@ make_icon 512 icon_512x512.png
 make_icon 1024 icon_512x512@2x.png
 
 cp "$EXECUTABLE" "$APP_DIR/Contents/MacOS/Madedown"
+cp "$UPDATER_HELPER" "$APP_DIR/Contents/Resources/MadedownUpdaterHelper"
 cp "$ROOT_DIR/Packaging/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$TITLEBAR_WORDMARK" "$APP_DIR/Contents/Resources/MadedownWordmark.png"
 iconutil -c icns -o "$APP_DIR/Contents/Resources/Madedown.icns" "$ICONSET_DIR"
 chmod +x "$APP_DIR/Contents/MacOS/Madedown"
+chmod +x "$APP_DIR/Contents/Resources/MadedownUpdaterHelper"
 
 if command -v codesign >/dev/null 2>&1; then
+  codesign --force --sign - "$APP_DIR/Contents/Resources/MadedownUpdaterHelper" >/dev/null 2>&1 || true
   codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
 fi
 

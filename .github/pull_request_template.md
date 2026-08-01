@@ -1,18 +1,19 @@
-## 改动
+## What changed
 
-<!-- 说明改了什么以及为什么。 -->
+<!-- Explain what changed and why. Write in English first; an optional Simplified Chinese translation may follow in a <details> section. -->
 
-## 用户影响
+## User impact
 
-<!-- 描述用户可见行为或兼容性影响。 -->
+<!-- Describe visible behavior and compatibility impact. -->
 
-## 验证
+## Validation
 
 - [ ] `swift build`
 - [ ] `swift run Madedown --self-test`
 - [ ] `./Scripts/audit_open_source.sh`
-- [ ] 已完成相关 UI 手工验证
+- [ ] Relevant UI behavior was verified manually
+- [ ] English and Simplified Chinese strings/docs remain equivalent, when applicable
 
-## 截图
+## Screenshots
 
-<!-- UI 变化请附截图；无 UI 变化可删除本节。 -->
+<!-- Attach screenshots for UI changes; remove this section when it does not apply. -->

@@ -1,46 +1,75 @@
 # Changelog
 
-本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的基本格式。
+**English** | [简体中文](CHANGELOG.zh-CN.md)
+
+This project follows the basic structure of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+
+## [1.3.0] - 2026-08-02
+
+### Added
+
+- The rendered editor now offers **Convert to Markdown**, **Paste Source**, and **Cancel** when pasted text looks like Markdown source.
+- Added bold (`⌘B`) and strikethrough (`⇧⌘X`) shortcuts in both source and rendered modes.
+- **Check for Updates** connects to GitHub Releases, compares stable versions, shows release notes and download progress, and prepares a validated macOS app for in-place replacement.
+- Added a standalone update helper with quit-time replacement, launch verification, rollback, administrator authorization, and temporary-file cleanup.
+- Added English and Simplified Chinese UI localization. Fresh installations default to English, and the selected language persists locally.
+
+### Changed
+
+- Increased the editor's horizontal safe spacing slightly and standardized tabs, content containers, buttons, and the floating outline on a 6 pt small-radius visual language.
+- Removed all Open, Save, Copy, and Image text buttons from the window. Document tabs now share the compact top editor bar with the remaining icon controls.
+- Tightened the floating outline's dimensions, spacing, and hierarchy to reduce document obstruction.
+- Online updates no longer open a DMG for another drag-install step; confirmation replaces the currently running app at its existing path.
+- GitHub-facing documentation is English-first, with complete linked Simplified Chinese versions. Future issues use English titles and English-first bodies.
+
+### Fixed
+
+- Table paragraph terminators retain native table layout attributes so adjacent borders remain connected after layout, resizing, or editing.
+- Tables redraw a complete pixel-aligned row/column grid during scrolling, preventing horizontal and vertical borders from breaking into segments.
+- The continuous table overlay now uses AppKit's native border box directly, preventing duplicate horizontal lines inside the first and last rows while preserving outer spacing.
+- Tab switching restores a top-visible character anchor plus its pixel offset, keeping the same text in view as well as the caret.
+- The title-bar wordmark uses a template tint that follows the system label color and remains visible in dark mode.
+- A single soft line break inside a paragraph is no longer collapsed into a space after reparsing.
 
 ## [1.2.1] - 2026-07-11
 
 ### Changed
 
-- 悬浮标题目录移到文本区域右上角，并使用更轻、更透明的背景。
-- 应用每次启动都默认进入即时渲染模式，不再恢复为源码模式。
+- Moved the floating heading outline to the editor's upper-right corner and used a lighter, more transparent background.
+- Every cold app launch now starts in rendered mode instead of restoring source mode from the previous session.
 
 ## [1.2.0] - 2026-07-11
 
 ### Added
 
-- 文本区域左上角悬浮 H1–H6 标题目录，支持点击跳转与收起。
-- `/` 菜单扩展到 1–6 级标题、常用行内格式、任务列表和表格，并改为双列布局。
-- 未保存文档支持直接插图，首次保存时自动迁移到相对附件目录。
-- 支持从访达拖放图片，以及粘贴截图或已复制的图片文件。
-- 原生查找替换、`⌘P` 最近文件快速打开、HTML/PDF 导出。
-- 标签页分别保存源码与渲染模式的光标和滚动位置。
-- 启动时间、内存、二进制和 App 包体积性能预算检查。
+- Added a floating H1–H6 outline with click-to-jump and collapse controls.
+- Expanded the `/` menu to H1–H6, common inline formats, task lists, and tables in a two-column layout.
+- Allowed images to be inserted before a document is saved and migrated them to a relative asset directory on first save.
+- Added image drag-and-drop from Finder plus pasted screenshots and copied image files.
+- Added native find/replace, `⌘P` recent-file quick open, and HTML/PDF export.
+- Saved caret and scroll positions separately for source and rendered modes in each tab.
+- Added startup-time, memory, executable-size, and app-bundle performance budgets.
 
 ### Changed
 
-- 标签页切换复用编辑器实例并移除过渡动画，降低切换延迟感。
-- README 明确项目由 AI 完成编码。
-- CI 增加性能预算门禁，所有新增能力继续保持零新增第三方依赖。
+- Reused editor instances and removed transition animations during tab switches.
+- Clarified in the README that the implementation is AI-coded.
+- Added CI performance-budget gates while keeping all new features free of additional third-party dependencies.
 
 ## [1.1.0] - 2026-07-11
 
 ### Added
 
-- 行首 `/` Markdown 格式菜单，支持键盘和鼠标操作。
-- 退格关闭 `/` 菜单并保留普通斜杠。
-- 本地图片插入、附件目录管理和渲染编辑器内直接显示。
-- 开源许可证、贡献指南、安全政策、CI 与敏感信息审计脚本。
+- Added a line-start `/` Markdown formatting menu with keyboard and mouse support.
+- Backspace closes the `/` menu while preserving a literal slash.
+- Added local image insertion, asset-directory management, and direct display in the rendered editor.
+- Added the open-source license, contribution guide, security policy, CI, and sensitive-file audit script.
 
 ### Changed
 
-- 会话快照改为合并写入，降低连续输入时的磁盘 I/O。
-- 编辑样式刷新缩小到受影响行。
-- 图片缓存设置数量和内存上限。
-- 清理“关于”窗口中的个人化文案。
+- Coalesced session snapshot writes to reduce disk I/O during continuous input.
+- Limited style refreshes to affected lines.
+- Added count and memory limits to the image cache.
+- Removed personalized copy from the About panel.
