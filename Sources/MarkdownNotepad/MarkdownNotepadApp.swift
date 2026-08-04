@@ -3567,12 +3567,11 @@ enum MarkdownRichText {
 
             if let ordered = sourceOrderedList(in: line), line == "\(ordered). " {
                 let newText = "\(ordered). "
-                storage.replaceCharacters(in: contentRange, with: newText)
                 selectedLocation = contentRange.location + (newText as NSString).length
                 let newRange = NSRange(location: contentRange.location, length: (newText as NSString).length)
                 applyBlockAttributes(style: Block.orderedList, index: ordered, range: newRange, storage: storage)
                 typingAttributes = typingAttributesFor(style: Block.orderedList, index: ordered)
-                location = NSMaxRange(newRange)
+                location = NSMaxRange(lineRange)
                 continue
             }
 
@@ -5923,7 +5922,9 @@ private enum MarkdownSelfTest {
         testHeadingReturnResetsToParagraph()
         testUnorderedListReturnContinuesMarker()
         testOrderedListReturnIncrementsMarker()
+        testOrderedListEmptyItemShortcutScanTerminates()
         testBackspaceRemovesListMarker()
+        testBackspaceRemovesOrderedListMarker()
         testSuggestedSaveFilenameUsesTabTitle()
         testFullWidthLayoutToggle()
         testHeadingSpacing()
@@ -6359,6 +6360,31 @@ private enum MarkdownSelfTest {
         )
     }
 
+    private static func testOrderedListEmptyItemShortcutScanTerminates() {
+        let textView = NSTextView()
+        MarkdownRichText.load(markdown: "1. 第一项", into: textView)
+        textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+
+        _ = MarkdownRichText.insertContinuedListLineBreakIfNeeded(
+            in: textView,
+            replacementRange: textView.selectedRange()
+        )
+        let secondReturnRange = textView.selectedRange()
+        _ = MarkdownRichText.insertContinuedListLineBreakIfNeeded(
+            in: textView,
+            replacementRange: secondReturnRange
+        )
+        _ = MarkdownRichText.consumeMarkdownShortcuts(
+            in: textView,
+            around: NSRange(location: secondReturnRange.location, length: 1)
+        )
+
+        precondition(
+            MarkdownRichText.serialize(textView.attributedString()) == "1. 第一项\n2. \n3. ",
+            "Scanning an empty ordered item followed by a newline must terminate without changing the list"
+        )
+    }
+
     private static func testBackspaceRemovesListMarker() {
         let textView = NSTextView()
         MarkdownRichText.load(markdown: "- 第一项", into: textView)
@@ -6389,6 +6415,39 @@ private enum MarkdownSelfTest {
         precondition(
             MarkdownRichText.serialize(textView.attributedString()) == "- 第一项\n普通文本",
             "Text entered after deleting a marker should become a paragraph"
+        )
+    }
+
+    private static func testBackspaceRemovesOrderedListMarker() {
+        let textView = NSTextView()
+        MarkdownRichText.load(markdown: "1. 第一项", into: textView)
+        textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+        _ = MarkdownRichText.insertContinuedListLineBreakIfNeeded(
+            in: textView,
+            replacementRange: textView.selectedRange()
+        )
+
+        let markerEnd = textView.selectedRange().location
+        let didRemove = MarkdownRichText.removeListMarkerIfNeeded(
+            in: textView,
+            replacementRange: NSRange(location: markerEnd - 1, length: 1)
+        )
+        MarkdownRichText.refreshTypingAttributes(in: textView)
+        let typingStyleAfterExit = textView.typingAttributes[.markdownBlockStyle] as? String
+        textView.insertText("普通文本", replacementRange: textView.selectedRange())
+        MarkdownRichText.applyDisplayStyles(to: textView)
+        textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+        let didContinueAfterExit = MarkdownRichText.insertContinuedListLineBreakIfNeeded(
+            in: textView,
+            replacementRange: textView.selectedRange()
+        )
+
+        precondition(didRemove, "Backspace after an ordered marker should remove the marker")
+        precondition(typingStyleAfterExit == "paragraph", "Deleting an ordered marker should clear the inherited list typing state")
+        precondition(!didContinueAfterExit, "Return after exiting an ordered list must not restart the list")
+        precondition(
+            MarkdownRichText.serialize(textView.attributedString()) == "1. 第一项\n普通文本",
+            "Text entered after deleting an ordered marker should become a paragraph"
         )
     }
 
