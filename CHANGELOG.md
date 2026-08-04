@@ -6,6 +6,13 @@ This project follows the basic structure of [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-05
+
+### Fixed
+
+- Prevented the rendered editor from hanging when its Markdown shortcut scanner revisited an empty ordered-list item followed by a newline.
+- Backspacing an empty ordered-list marker now reliably exits to paragraph input; subsequent typing and Return do not restart the list.
+
 ## [1.3.0] - 2026-08-02
 
 ### Added

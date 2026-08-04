@@ -1,8 +1,8 @@
-# Madedown 1.3.0 Release Validation
+# Madedown 1.3.1 Release Validation
 
 **English** | [简体中文](RELEASE_VALIDATION.zh-CN.md)
 
-Validation date: 2026-08-01
+Validation date: 2026-08-05
 
 ## Automated Checks
 
@@ -12,14 +12,14 @@ Validation date: 2026-08-01
 - `.build/release/Madedown --self-test`: passed
 - `swift run MadedownUpdaterHelper --self-test`: passed, including temporary signed-app validation, in-place replacement, and rollback
 - `./Scripts/check_performance_budget.sh`: passed
-- `plutil -lint Packaging/Info.plist dist/Madedown.app/Contents/Info.plist`: passed; app version is `1.3.0` (build `7`)
+- `plutil -lint Packaging/Info.plist dist/Madedown.app/Contents/Info.plist`: passed; app version is `1.3.1` (build `8`)
 - `./Scripts/audit_open_source.sh`: passed
 - Strict ad-hoc code-signature verification for the app and bundled `MadedownUpdaterHelper`: passed
-- `Madedown-1.3.0.dmg` creation and checksum verification: passed
-- DMG SHA-256: `b2e7dd7b0b127561de17d2505abde203b8b0a7ed36f9f03dc2abf8d13ef3c2fc`
+- `Madedown-1.3.1.dmg` creation and checksum verification: passed
+- DMG SHA-256: `9e23b7d5c0940358c6d3bd0c3fb2c01d319edcebdb9ffc09db728db09a474e93`
 - `git diff --check`: passed
 
-The self-test suite continues to cover headings, soft breaks, lists, quotes, code, task lists, images, HTML/PDF export, sessions, per-tab viewports, the outline, and GFM tables. The 1.3.0 regressions additionally cover:
+The self-test suite continues to cover headings, soft breaks, lists, quotes, code, task lists, images, HTML/PDF export, sessions, per-tab viewports, the outline, and GFM tables. It retains the 1.3.0 regressions below:
 
 - Markdown paste classification for headings, lists, tables, inline formatting, and ordinary-text false positives
 - Converted Markdown paste retaining serializable headings and lists
@@ -34,30 +34,29 @@ The self-test suite continues to cover headings, soft breaks, lists, quotes, cod
 - Updater validation of bundle identifier, version, executable, and signature; corrupted apps are rejected
 - The helper's temporary transaction: old-version backup → in-place replacement → target validation → backup removal, with rollback on failure
 
+The 1.3.1 hotfix additionally covers:
+
+- Scanning a marker-only ordered-list item followed by a newline terminates without changing its serialized Markdown
+- Backspacing an empty ordered-list marker clears inherited list typing state
+- Text and Return entered after ordered-list exit remain normal paragraphs
+
 ## Real macOS UI Validation
 
-The Release app was exercised through the real macOS interface. Test-only content stayed in temporary tabs, and the final empty test tab was removed.
+The 1.3.1 Release app was exercised through the real macOS interface for the hotfix path. Test-only content stayed in a temporary tab and was discarded afterward. The broader 1.3.0 interface validation remains available in the [v1.3.0 validation record](https://github.com/zhxnix/Madedown/blob/v1.3.0/Docs/RELEASE_VALIDATION.md).
 
-- The Open, Save, Copy, and Image text buttons are absent from the window
-- Document tabs occupy the former action-button area and share one 38 pt top row with mode, width, window-layout, pin, and language controls
-- Horizontal tab behavior, close controls, dirty indicators, and the add-tab button remain available
-- A new document in English mode is named `Untitled`
-- The globe control exposes English and Simplified Chinese; switching updates menus, tab help, the outline, empty-state text, status counts, and other visible labels after the menu closes
-- Switching back to English and relaunching restores English, confirming preference persistence
-- Existing document titles and contents are not translated
-- Repeated vertical table scrolling keeps every visible boundary connected
-- The first and last table rows have exactly one outer boundary; no extra line is drawn inside either margin
-- Dark-mode wordmark contrast and the shared small-radius visual language remain correct
-- Existing source/rendered switching, layout controls, outline navigation, and tab session restoration remain intact
+- Return on a non-empty ordered item creates the next numbered item
+- Return again on the empty item creates the following number without hanging; the window stays responsive
+- Backspace on an empty ordered marker removes the marker and exits the list
+- Text and Return entered afterward remain plain paragraphs with no automatic list marker
 
 ## Performance and Memory
 
 Latest budget result:
 
-- Release main executable: `3,810,968 B` (budget: `8 MiB`)
-- App bundle including updater helper: `5,208 KiB` (budget: `12 MiB`)
-- Startup probe: `20 ms` (budget: `750 ms`)
-- Startup RSS: `16,777,216 B` (budget: `80 MiB`)
+- Release main executable: `3,827,896 B` (budget: `8 MiB`)
+- App bundle including updater helper: `5,224 KiB` (budget: `12 MiB`)
+- Startup probe: `10 ms` (budget: `750 ms`)
+- Startup RSS: `16,465,920 B` (budget: `80 MiB`)
 
 Update work starts only after a user action and adds no resident background process. The helper runs briefly only after **Install and Relaunch** is confirmed. GitHub requests and asset downloads use system `URLSession`; download tasks are released after completion. The title-bar wordmark is decoded near its display size.
 
