@@ -9,6 +9,23 @@ struct MadedownApp: App {
     @StateObject private var store: MarkdownStore
 
     init() {
+        if let argumentIndex = CommandLine.arguments.firstIndex(of: "--dmg-self-test") {
+            guard CommandLine.arguments.indices.contains(argumentIndex + 1) else {
+                FileHandle.standardError.write(Data("Missing DMG path\n".utf8))
+                Foundation.exit(2)
+            }
+            do {
+                try runMadedownDMGExtractionSelfTest(
+                    URL(fileURLWithPath: CommandLine.arguments[argumentIndex + 1]),
+                    expectedVersion: MadedownUpdateLogic.currentVersion
+                )
+                print("Madedown DMG preparation self-test passed")
+                Foundation.exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+                Foundation.exit(1)
+            }
+        }
         if CommandLine.arguments.contains("--self-test") {
             MarkdownSelfTest.run()
             Foundation.exit(0)

@@ -4,6 +4,8 @@
 
 Madedown 1.3.1 是一次聚焦所见即所得编辑器有序列表稳定性的修复版本。
 
+> **已知更新问题：** Madedown 1.3.0 和 1.3.1 点击“安装并重新启动”后可能一直转圈。请从 GitHub Releases 手动安装一次 1.3.2；1.3.2 已修复后续软件内更新。
+
 ## 修复内容
 
 - Markdown 快捷输入扫描器识别有序列表标记后，会稳定推进到当前整行之后。
@@ -19,6 +21,6 @@ Madedown 继续支持 macOS 13 及更高版本。下载版使用 ad-hoc 签名�
 
 ## 下载
 
-从 GitHub Releases 下载 `Madedown-1.3.1.dmg`，再将 `Madedown.app` 拖入“应用程序”。已安装 1.3.0 的用户也可以通过 **帮助 → 检查更新…** 完成校验后的原位更新。
+从 GitHub Releases 下载 `Madedown-1.3.1.dmg`，再将 `Madedown.app` 拖入“应用程序”。1.3.0 和 1.3.1 请不要使用“安装并重新启动”，需要手动更新一次到 1.3.2。
 
 SHA-256：`9e23b7d5c0940358c6d3bd0c3fb2c01d319edcebdb9ffc09db728db09a474e93`

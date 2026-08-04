@@ -1,4 +1,4 @@
-# Madedown 1.3.1 Release Validation
+# Madedown 1.3.2 Release Validation
 
 **English** | [简体中文](RELEASE_VALIDATION.zh-CN.md)
 
@@ -10,13 +10,14 @@ Validation date: 2026-08-05
 - `swift build -c release`: passed
 - `swift run Madedown --self-test`: passed
 - `.build/release/Madedown --self-test`: passed
+- `.build/release/Madedown --dmg-self-test dist/Madedown-1.3.2.dmg`: passed; the staged app validates and the mount directory is empty after extraction
 - `swift run MadedownUpdaterHelper --self-test`: passed, including temporary signed-app validation, in-place replacement, and rollback
 - `./Scripts/check_performance_budget.sh`: passed
-- `plutil -lint Packaging/Info.plist dist/Madedown.app/Contents/Info.plist`: passed; app version is `1.3.1` (build `8`)
+- `plutil -lint Packaging/Info.plist dist/Madedown.app/Contents/Info.plist`: passed; app version is `1.3.2` (build `9`)
 - `./Scripts/audit_open_source.sh`: passed
 - Strict ad-hoc code-signature verification for the app and bundled `MadedownUpdaterHelper`: passed
-- `Madedown-1.3.1.dmg` creation and checksum verification: passed
-- DMG SHA-256: `9e23b7d5c0940358c6d3bd0c3fb2c01d319edcebdb9ffc09db728db09a474e93`
+- `Madedown-1.3.2.dmg` creation and checksum verification: passed
+- DMG SHA-256: `c2281735de0125f347535fe3fbcdf9c91edda1333836fe10b9cd42af323978e8`
 - `git diff --check`: passed
 
 The self-test suite continues to cover headings, soft breaks, lists, quotes, code, task lists, images, HTML/PDF export, sessions, per-tab viewports, the outline, and GFM tables. It retains the 1.3.0 regressions below:
@@ -40,9 +41,27 @@ The 1.3.1 hotfix additionally covers:
 - Backspacing an empty ordered-list marker clears inherited list typing state
 - Text and Return entered after ordered-list exit remain normal paragraphs
 
+The 1.3.2 hotfix additionally covers:
+
+- Installation remains in the waiting phase while the update sheet is attached
+- The helper launches only after the update sheet has detached
+- A failed helper reports its captured error and cleans the prepared workspace instead of leaving an endless installing state
+- DMG enumeration resources are released before detachment, with normal retries and a force-detach fallback
+
 ## Real macOS UI Validation
 
-The 1.3.1 Release app was exercised through the real macOS interface for the hotfix path. Test-only content stayed in a temporary tab and was discarded afterward. The broader 1.3.0 interface validation remains available in the [v1.3.0 validation record](https://github.com/zhxnix/Madedown/blob/v1.3.0/Docs/RELEASE_VALIDATION.md).
+The failure was first reproduced in the installed 1.3.0 app: after **Install and Relaunch**, the main process remained alive, the helper disappeared after its 30-second timeout, and AppKit logged `App termination blocked by modal sheet` followed by `Termination aborted`.
+
+The fixed Release build was then exercised through a real online update in a temporary application directory. The temporary app reported version 1.3.0 while running the corrected controller, then downloaded and installed the official 1.3.1 Release asset.
+
+- The update sheet closes before termination is requested
+- The original process exits without an AppKit modal-sheet rejection
+- The staged app replaces the exact temporary target path and reports version 1.3.1
+- The replacement app relaunches automatically with a new process identifier
+- The rollback copy is removed after successful launch verification
+- Existing session content reopens unchanged; the test does not edit document content
+
+The 1.3.1 ordered-list UI regressions were also rerun. The broader 1.3.0 interface validation remains available in the [v1.3.0 validation record](https://github.com/zhxnix/Madedown/blob/v1.3.0/Docs/RELEASE_VALIDATION.md).
 
 - Return on a non-empty ordered item creates the next numbered item
 - Return again on the empty item creates the following number without hanging; the window stays responsive
@@ -53,10 +72,10 @@ The 1.3.1 Release app was exercised through the real macOS interface for the hot
 
 Latest budget result:
 
-- Release main executable: `3,827,896 B` (budget: `8 MiB`)
-- App bundle including updater helper: `5,224 KiB` (budget: `12 MiB`)
-- Startup probe: `10 ms` (budget: `750 ms`)
-- Startup RSS: `16,465,920 B` (budget: `80 MiB`)
+- Release main executable: `3,834,696 B` (budget: `8 MiB`)
+- App bundle including updater helper: `5,232 KiB` (budget: `12 MiB`)
+- Startup probe: `30 ms` (budget: `750 ms`)
+- Startup RSS: `16,416,768 B` (budget: `80 MiB`)
 
 Update work starts only after a user action and adds no resident background process. The helper runs briefly only after **Install and Relaunch** is confirmed. GitHub requests and asset downloads use system `URLSession`; download tasks are released after completion. The title-bar wordmark is decoded near its display size.
 
@@ -69,6 +88,8 @@ These budgets detect regressions; they are not fixed measurements for every macO
 - GitHub is contacted only after a manual update check; document content is never sent
 - Installer downloads must use approved GitHub HTTPS hosts and are staged under `~/Library/Application Support/Madedown/Updates/`
 - The package is validated before the app quits; installation starts only after another explicit confirmation
+- The modal update sheet must detach before the helper launches and AppKit is asked to terminate
+- Helper failures are captured and presented if the original app remains alive
 - The helper replaces only the running app path, removes the rollback copy after a successful launch, and restores the old version after failure
 - Administrator authorization is used when needed instead of installing a second copy; same-named apps elsewhere are not scanned or deleted
 - The UI test did not save changes to the user's formal documents

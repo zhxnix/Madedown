@@ -132,6 +132,8 @@ enum MadedownUpdateError: LocalizedError {
     case currentApplicationCannotBeReplaced
     case updaterHelperMissing
     case unableToStartUpdater
+    case unableToDismissUpdateSheet
+    case updaterFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -200,13 +202,28 @@ enum MadedownUpdateError: LocalizedError {
                 "The update helper could not start. The installed version was not changed.",
                 "无法启动更新助手，旧版本没有被改动。"
             )
+        case .unableToDismissUpdateSheet:
+            return MadedownL10n.text(
+                "The update window could not close before installation. The installed version was not changed.",
+                "安装前无法关闭更新窗口，旧版本没有被改动。"
+            )
+        case let .updaterFailed(message):
+            return MadedownL10n.text(
+                "The update helper stopped before installation completed: \(message)",
+                "更新助手未能完成安装：\(message)"
+            )
         }
     }
 }
 
 enum MadedownUpdateLogic {
+    enum InstallLaunchDecision: Equatable {
+        case waitForUpdateSheet
+        case launchUpdater
+    }
+
     static let repository = "zhxnix/Madedown"
-    static let bundledVersionFallback = "1.3.1"
+    static let bundledVersionFallback = "1.3.2"
 
     static var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -242,6 +259,10 @@ enum MadedownUpdateLogic {
         return host == "github.com" ||
             host == "objects.githubusercontent.com" ||
             host.hasSuffix(".githubusercontent.com")
+    }
+
+    static func installLaunchDecision(updateSheetIsAttached: Bool) -> InstallLaunchDecision {
+        updateSheetIsAttached ? .waitForUpdateSheet : .launchUpdater
     }
 
     private static func assetScore(_ asset: MadedownReleaseAsset) -> (Int, Int, String) {
@@ -319,6 +340,14 @@ enum MadedownUpdateLogic {
         precondition(
             preferredAsset(in: packageOnlyRelease) == nil,
             "The in-place updater must not open a PKG that can create a second installation"
+        )
+        precondition(
+            installLaunchDecision(updateSheetIsAttached: true) == .waitForUpdateSheet,
+            "The updater must not ask AppKit to terminate while its modal sheet is attached"
+        )
+        precondition(
+            installLaunchDecision(updateSheetIsAttached: false) == .launchUpdater,
+            "The updater should launch only after its modal sheet is detached"
         )
     }
 }
@@ -599,6 +628,35 @@ private enum MadedownUpdatePackagePreparer {
         }.value
     }
 
+    static func runDMGExtractionSelfTest(_ dmgURL: URL, expectedVersion: String) throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(
+            "Madedown-DMGPreparation-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let mountURL = root.appendingPathComponent("mounted", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer {
+            try? run("/usr/bin/hdiutil", arguments: ["detach", "-force", "-quiet", mountURL.path])
+            try? fileManager.removeItem(at: root)
+        }
+
+        let copiedApp = try appFromDMG(dmgURL, mountedAt: mountURL)
+        try validateApplication(copiedApp, expectedVersion: expectedVersion)
+        let remainingMountContents = try fileManager.contentsOfDirectory(
+            at: mountURL,
+            includingPropertiesForKeys: nil
+        )
+        guard remainingMountContents.isEmpty else {
+            throw MadedownUpdateError.unableToPrepareInstaller(
+                MadedownL10n.text(
+                    "The DMG remained mounted after extraction",
+                    "提取完成后 DMG 仍处于挂载状态"
+                )
+            )
+        }
+    }
+
     private static func prepareSynchronously(
         downloaded: MadedownDownloadedAsset,
         asset: MadedownReleaseAsset,
@@ -645,13 +703,31 @@ private enum MadedownUpdatePackagePreparer {
             "/usr/bin/hdiutil",
             arguments: ["attach", dmgURL.path, "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mountURL.path]
         )
-        defer {
-            try? run("/usr/bin/hdiutil", arguments: ["detach", mountURL.path, "-quiet"])
+        do {
+            let app = try autoreleasepool {
+                try findApplication(in: mountURL)
+            }
+            let copiedApp = mountURL.deletingLastPathComponent().appendingPathComponent("MountedMadedown.app")
+            try run("/usr/bin/ditto", arguments: [app.path, copiedApp.path])
+            try detachDMG(at: mountURL)
+            return copiedApp
+        } catch {
+            try? detachDMG(at: mountURL)
+            throw error
         }
-        let app = try findApplication(in: mountURL)
-        let copiedApp = mountURL.deletingLastPathComponent().appendingPathComponent("MountedMadedown.app")
-        try run("/usr/bin/ditto", arguments: [app.path, copiedApp.path])
-        return copiedApp
+    }
+
+    private static func detachDMG(at mountURL: URL) throws {
+        for attempt in 0..<10 {
+            do {
+                try run("/usr/bin/hdiutil", arguments: ["detach", "-quiet", mountURL.path])
+                return
+            } catch {
+                guard attempt < 9 else { break }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        }
+        try run("/usr/bin/hdiutil", arguments: ["detach", "-force", "-quiet", mountURL.path])
     }
 
     private static func findApplication(in root: URL) throws -> URL {
@@ -722,6 +798,13 @@ private enum MadedownUpdatePackagePreparer {
     }
 }
 
+func runMadedownDMGExtractionSelfTest(_ dmgURL: URL, expectedVersion: String) throws {
+    try MadedownUpdatePackagePreparer.runDMGExtractionSelfTest(
+        dmgURL,
+        expectedVersion: expectedVersion
+    )
+}
+
 private extension FileManager {
     func removeItemIfPresent(at url: URL) throws {
         if fileExists(atPath: url.path) {
@@ -750,6 +833,9 @@ final class MadedownUpdateController: ObservableObject {
     @Published private(set) var state: State = .idle
 
     private var workTask: Task<Void, Never>?
+    private var installTask: Task<Void, Never>?
+    private var updaterProcess: Process?
+    private var updaterErrorPipe: Pipe?
     private let client = GitHubReleaseClient()
 
     private init() {}
@@ -852,7 +938,50 @@ final class MadedownUpdateController: ObservableObject {
         guard case let .readyToInstall(release, update) = state else { return }
         state = .installing(release: release)
 
+        let updateSheet = activeUpdateSheet()
+        isPresented = false
+        installTask?.cancel()
+        installTask = Task { [weak self] in
+            guard let self else { return }
+            let sheetDismissed = await waitForUpdateSheetToDismiss(updateSheet)
+            guard !Task.isCancelled else { return }
+            installTask = nil
+            guard sheetDismissed else {
+                failInstallation(
+                    MadedownUpdateError.unableToDismissUpdateSheet.localizedDescription,
+                    workspaceURL: update.workspaceURL
+                )
+                return
+            }
+            launchUpdater(update: update)
+        }
+    }
+
+    private func activeUpdateSheet() -> NSWindow? {
+        if let keyWindow = NSApp.keyWindow, keyWindow.sheetParent != nil {
+            return keyWindow
+        }
+        return NSApp.windows.lazy.compactMap(\.attachedSheet).first
+    }
+
+    private func waitForUpdateSheetToDismiss(_ updateSheet: NSWindow?) async -> Bool {
+        for _ in 0..<100 {
+            let isAttached = updateSheet?.sheetParent != nil
+            if MadedownUpdateLogic.installLaunchDecision(updateSheetIsAttached: isAttached) == .launchUpdater {
+                return true
+            }
+            do {
+                try await Task.sleep(nanoseconds: 20_000_000)
+            } catch {
+                return false
+            }
+        }
+        return false
+    }
+
+    private func launchUpdater(update: MadedownPreparedUpdate) {
         let process = Process()
+        let errorPipe = Pipe()
         process.executableURL = update.helperURL
         process.arguments = [
             "--staged-app", update.stagedAppURL.path,
@@ -862,14 +991,44 @@ final class MadedownUpdateController: ObservableObject {
             "--parent-pid", String(ProcessInfo.processInfo.processIdentifier)
         ]
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        process.standardError = errorPipe
+        process.terminationHandler = { [weak self] completedProcess in
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let helperMessage = String(data: errorData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            Task { @MainActor [weak self] in
+                guard let self, updaterProcess === completedProcess else { return }
+                updaterProcess = nil
+                updaterErrorPipe = nil
+                guard completedProcess.terminationStatus != 0 else { return }
+                let message = helperMessage.flatMap { $0.isEmpty ? nil : $0 }
+                    ?? MadedownL10n.text("Unknown helper error", "未知的更新助手错误")
+                failInstallation(
+                    MadedownUpdateError.updaterFailed(message).localizedDescription,
+                    workspaceURL: update.workspaceURL
+                )
+            }
+        }
+
+        updaterProcess = process
+        updaterErrorPipe = errorPipe
         do {
             try process.run()
             NSApp.terminate(nil)
         } catch {
-            try? FileManager.default.removeItem(at: update.workspaceURL)
-            state = .failure(message: MadedownUpdateError.unableToStartUpdater.localizedDescription)
+            updaterProcess = nil
+            updaterErrorPipe = nil
+            failInstallation(
+                MadedownUpdateError.unableToStartUpdater.localizedDescription,
+                workspaceURL: update.workspaceURL
+            )
         }
+    }
+
+    private func failInstallation(_ message: String, workspaceURL: URL) {
+        try? FileManager.default.removeItem(at: workspaceURL)
+        state = .failure(message: message)
+        isPresented = true
     }
 
     func openReleasePage(_ release: MadedownRelease) {

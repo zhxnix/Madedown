@@ -6,6 +6,14 @@ This project follows the basic structure of [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-08-05
+
+### Fixed
+
+- The in-app updater now dismisses and waits for its modal update sheet before asking AppKit to quit, preventing **Install and Relaunch** from remaining on an endless spinner.
+- The update controller retains and monitors the helper process, surfaces helper failures, and cleans the prepared workspace instead of silently timing out.
+- DMG preparation now releases directory-enumerator resources and retries detachment, preventing installer images and update workspaces from remaining mounted after preparation.
+
 ## [1.3.1] - 2026-08-05
 
 ### Fixed
