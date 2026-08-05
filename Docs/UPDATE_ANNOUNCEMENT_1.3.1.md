@@ -4,6 +4,8 @@
 
 Madedown 1.3.1 is a focused stability update for ordered-list editing in the rendered editor.
 
+> **Known update issue:** Madedown 1.3.0 and 1.3.1 can remain on an endless spinner after **Install and Relaunch**. Install 1.3.2 manually from GitHub Releases once; later in-app updates are fixed in 1.3.2.
+
 ## What Was Fixed
 
 - The Markdown shortcut scanner now always advances beyond the current line after recognizing an ordered-list marker.
@@ -19,6 +21,6 @@ Madedown continues to support macOS 13 and later. The downloadable app is ad-hoc
 
 ## Download
 
-Download `Madedown-1.3.1.dmg` from GitHub Releases and drag `Madedown.app` into Applications. Existing 1.3.0 installations can also use **Help → Check for Updates…** for validated in-place replacement.
+Download `Madedown-1.3.1.dmg` from GitHub Releases and drag `Madedown.app` into Applications. Do not use **Install and Relaunch** from 1.3.0 or 1.3.1; update to 1.3.2 manually once.
 
 SHA-256: `9e23b7d5c0940358c6d3bd0c3fb2c01d319edcebdb9ffc09db728db09a474e93`
