@@ -223,7 +223,7 @@ enum MadedownUpdateLogic {
     }
 
     static let repository = "zhxnix/Madedown"
-    static let bundledVersionFallback = "1.3.2"
+    static let bundledVersionFallback = "1.3.3"
 
     static var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -997,13 +997,13 @@ final class MadedownUpdateController: ObservableObject {
             let helperMessage = String(data: errorData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             Task { @MainActor [weak self] in
-                guard let self, updaterProcess === completedProcess else { return }
-                updaterProcess = nil
-                updaterErrorPipe = nil
+                guard let self, self.updaterProcess === completedProcess else { return }
+                self.updaterProcess = nil
+                self.updaterErrorPipe = nil
                 guard completedProcess.terminationStatus != 0 else { return }
                 let message = helperMessage.flatMap { $0.isEmpty ? nil : $0 }
                     ?? MadedownL10n.text("Unknown helper error", "未知的更新助手错误")
-                failInstallation(
+                self.failInstallation(
                     MadedownUpdateError.updaterFailed(message).localizedDescription,
                     workspaceURL: update.workspaceURL
                 )

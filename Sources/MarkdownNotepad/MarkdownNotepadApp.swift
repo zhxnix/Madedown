@@ -3584,10 +3584,13 @@ enum MarkdownRichText {
 
             if let ordered = sourceOrderedList(in: line), line == "\(ordered). " {
                 let newText = "\(ordered). "
-                selectedLocation = contentRange.location + (newText as NSString).length
                 let newRange = NSRange(location: contentRange.location, length: (newText as NSString).length)
                 applyBlockAttributes(style: Block.orderedList, index: ordered, range: newRange, storage: storage)
-                typingAttributes = typingAttributesFor(style: Block.orderedList, index: ordered)
+                // Styling an existing marker must not pull the caret back from
+                // the next item that the Return handler has just inserted.
+                if selectedLocation >= newRange.location, selectedLocation <= NSMaxRange(newRange) {
+                    typingAttributes = typingAttributesFor(style: Block.orderedList, index: ordered)
+                }
                 location = NSMaxRange(lineRange)
                 continue
             }
@@ -4337,6 +4340,8 @@ enum MarkdownRichText {
 
             if isImageBlock,
                NSMaxRange(lineRange) < attributed.length,
+               nsString.character(at: NSMaxRange(lineRange)) != 10,
+               nsString.character(at: NSMaxRange(lineRange)) != 13,
                lines.last?.isEmpty == false {
                 lines.append("")
             }
@@ -4351,7 +4356,12 @@ enum MarkdownRichText {
             lines.append("```")
         }
 
-        return lines.joined(separator: "\n")
+        // NSString.lineRange does not visit the empty line after a final Return.
+        // Keep that terminator in the model before a tab or mode reloads it.
+        let trailingNewline = nsString.length > 0 &&
+            (nsString.character(at: nsString.length - 1) == 10 ||
+             nsString.character(at: nsString.length - 1) == 13)
+        return lines.joined(separator: "\n") + (trailingNewline ? "\n" : "")
     }
 
     private static func serializeTable(
@@ -4881,24 +4891,47 @@ enum MarkdownRichText {
         let baseURL: URL?
         private var result = NSMutableAttributedString()
         private var listDepth = 0
+        private var sourceLines: [String] = []
+        private var pendingLineBreaks: Int?
 
         init(baseURL: URL?) {
             self.baseURL = baseURL
         }
 
         mutating func render(markdown: String) -> NSMutableAttributedString {
+            let source = markdown.replacingOccurrences(of: "\r\n", with: "\n")
+                .replacingOccurrences(of: "\r", with: "\n")
+            sourceLines = source.components(separatedBy: "\n")
             let document = Markdown.Document(
-                parsing: markdown,
+                parsing: source,
                 options: [.disableSmartOpts]
             )
+            if document.childCount == 0, source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return NSMutableAttributedString(string: source, attributes: customAttributes(style: Block.paragraph))
+            }
             appendChildren(of: document)
+            appendLineBreaks(source.reversed().prefix { $0 == "\n" }.count)
             return result
         }
 
         private mutating func appendChildren(of markup: Markdown.Markup) {
             for child in markup.children {
+                prepareLineBreaks(before: child)
                 appendBlock(child)
             }
+        }
+
+        private mutating func prepareLineBreaks(before markup: Markdown.Markup) {
+            guard let line = markup.range?.lowerBound.line else { return }
+            var precedingLine = min(line - 2, sourceLines.count - 1)
+            var blankLines = 0
+            while precedingLine >= 0,
+                  sourceLines[precedingLine].trimmingCharacters(in: .whitespaces).isEmpty {
+                blankLines += 1
+                precedingLine -= 1
+            }
+            // Blank lines are absent from the AST, but are editable content.
+            pendingLineBreaks = blankLines + (result.length > 0 ? 1 : 0)
         }
 
         private mutating func appendBlock(_ markup: Markdown.Markup) {
@@ -4920,7 +4953,9 @@ enum MarkdownRichText {
                 }
                 appendLine(line)
             } else if let code = markup as? Markdown.CodeBlock {
-                appendLine(attributedPlainLine(code.code, style: Block.code))
+                // The parser includes the line ending before the closing fence.
+                let content = code.code.hasSuffix("\n") ? String(code.code.dropLast()) : code.code
+                appendLine(attributedPlainLine(content, style: Block.code))
             } else if markup is Markdown.ThematicBreak {
                 appendLine(attributedPlainLine("――――――――", style: Block.rule))
             } else if let quote = markup as? Markdown.BlockQuote {
@@ -4939,18 +4974,22 @@ enum MarkdownRichText {
         }
 
         private mutating func appendLine(_ line: NSAttributedString) {
-            if result.length > 0 {
+            let lineBreaks = pendingLineBreaks ?? (result.length > 0 ? 1 : 0)
+            pendingLineBreaks = nil
+            appendLineBreaks(lineBreaks)
+            result.append(line)
+        }
+
+        private mutating func appendLineBreaks(_ count: Int) {
+            guard count > 0 else { return }
+            for index in 0..<count {
+                let attributes = index == 0 && result.length > 0
+                    ? MarkdownRichText.paragraphTerminatorAttributes(from: result, at: result.length - 1)
+                    : customAttributes(style: Block.paragraph)
                 result.append(
-                    NSAttributedString(
-                        string: "\n",
-                        attributes: MarkdownRichText.paragraphTerminatorAttributes(
-                            from: result,
-                            at: result.length - 1
-                        )
-                    )
+                    NSAttributedString(string: "\n", attributes: attributes)
                 )
             }
-            result.append(line)
         }
 
         private func inlineChildren(
@@ -5090,6 +5129,7 @@ enum MarkdownRichText {
 
             for child in list.children {
                 guard let item = child as? Markdown.ListItem else { continue }
+                prepareLineBreaks(before: item)
                 let checkbox = item.checkbox
                 let marker: String
                 let taskState: String?
@@ -5117,6 +5157,7 @@ enum MarkdownRichText {
             var index = Int(list.startIndex)
             for child in list.children {
                 guard let item = child as? Markdown.ListItem else { continue }
+                prepareLineBreaks(before: item)
                 appendListItem(item, marker: "\(index). ", style: Block.orderedList, index: index, taskState: nil)
                 index += 1
             }
@@ -5947,6 +5988,7 @@ private enum MarkdownSelfTest {
         testHeadingSpacing()
         testCommonMarkdownRoundTrip()
         testSoftBreakPreservesLineBreak()
+        testBlankLinesSurviveEditorReload()
         testMarkdownPasteDetectionAndConversion()
         testInlineFormattingCommands()
         testGitHubMarkdownFeaturesRender()
@@ -6251,8 +6293,8 @@ private enum MarkdownSelfTest {
 
         let serialized = MarkdownRichText.serialize(textView.attributedString())
         precondition(
-            serialized == "- Existing item\n\n![Madedown](Assets/Logo/madedown-app-icon.png)",
-            "Inserted images should use their own paragraph instead of joining the preceding list item"
+            serialized == "- Existing item\n\n![Madedown](Assets/Logo/madedown-app-icon.png)\n",
+            "Inserted images should keep their own paragraph and the following editable line"
         )
 
         let reloaded = NSTextView()
@@ -6400,6 +6442,14 @@ private enum MarkdownSelfTest {
             MarkdownRichText.serialize(textView.attributedString()) == "1. 第一项\n2. \n3. ",
             "Scanning an empty ordered item followed by a newline must terminate without changing the list"
         )
+        precondition(textView.selectedRange().location == textView.string.utf16.count,
+                     "Scanning the previous empty item must not move the caret away from the new item")
+        _ = MarkdownRichText.insertContinuedListLineBreakIfNeeded(
+            in: textView,
+            replacementRange: textView.selectedRange()
+        )
+        precondition(MarkdownRichText.serialize(textView.attributedString()) == "1. 第一项\n2. \n3. \n4. ",
+                     "Repeated Returns must continue at the current item without duplicate numbering")
     }
 
     private static func testBackspaceRemovesListMarker() {
@@ -6518,6 +6568,38 @@ private enum MarkdownSelfTest {
             MarkdownRichText.serialize(textView.attributedString()) == markdown,
             "Soft break line breaks should survive render/serialize round trips"
         )
+    }
+
+    private static func testBlankLinesSurviveEditorReload() {
+        let textView = NSTextView()
+        let fixtures = [
+            "\n", "\n\n\n", "第一行\n", "第一行\n\n\n",
+            "\n\n第一行\n第二行\n\n\n第三行🙂\n\n",
+            "# 标题\n\n正文\n\n\n## 小标题\n\n结尾\n",
+            "1. 第一项\n\n2. 第二项\n\n正文\n",
+            "- 第一项\n\n- 第二项\n\n正文\n",
+            "正文\n\n```\n代码\n```\n\n结尾\n",
+            "| A | B |\n| --- | --- |\n| 1 | 2 |\n\n\n正文\n"
+        ]
+        for markdown in fixtures {
+            MarkdownRichText.load(markdown: markdown, into: textView)
+            let expectedDisplay = textView.string
+            for _ in 0..<3 {
+                let saved = MarkdownRichText.serialize(textView.attributedString())
+                precondition(saved == markdown, "Newlines changed during serialization: \(markdown.debugDescription) -> \(saved.debugDescription)")
+                MarkdownRichText.load(markdown: "另一个标签页", into: textView)
+                MarkdownRichText.load(markdown: saved, into: textView)
+                precondition(textView.string == expectedDisplay, "Tab reload must retain the same visible lines")
+            }
+        }
+
+        MarkdownRichText.load(markdown: "第一行", into: textView)
+        textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+        textView.insertText("\n\n", replacementRange: textView.selectedRange())
+        let saved = MarkdownRichText.serialize(textView.attributedString())
+        precondition(saved == "第一行\n\n", "Returns typed at the document end must reach the document model")
+        MarkdownRichText.load(markdown: saved, into: textView)
+        precondition(textView.string == saved, "Trailing Returns must remain visible after reload")
     }
 
     private static func testMarkdownPasteDetectionAndConversion() {
