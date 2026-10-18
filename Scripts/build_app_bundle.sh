@@ -4,8 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/dist/Madedown.app"
 LEGACY_APP_DIR="$ROOT_DIR/dist/MarkdownNotepad.app"
-EXECUTABLE="$ROOT_DIR/.build/release/Madedown"
-UPDATER_HELPER="$ROOT_DIR/.build/release/MadedownUpdaterHelper"
 APP_ICON="$ROOT_DIR/Assets/Logo/madedown-app-icon.png"
 TITLEBAR_WORDMARK="$ROOT_DIR/Assets/Logo/madedown-titlebar-wordmark.png"
 ICONSET_DIR="$ROOT_DIR/.build/Madedown.iconset"
@@ -16,7 +14,14 @@ swift "$ROOT_DIR/Scripts/generate_brand_assets.swift" \
   "$APP_ICON" \
   "$TITLEBAR_WORDMARK"
 
-swift build -c release --package-path "$ROOT_DIR"
+BUILD_OPTIONS=(-c release --package-path "$ROOT_DIR")
+if [[ -n "${MADEDOWN_SDK_PATH:-}" ]]; then
+  BUILD_OPTIONS+=(--sdk "$MADEDOWN_SDK_PATH")
+fi
+swift build "${BUILD_OPTIONS[@]}"
+BIN_DIR="$(swift build "${BUILD_OPTIONS[@]}" --show-bin-path)"
+EXECUTABLE="$BIN_DIR/Madedown"
+UPDATER_HELPER="$BIN_DIR/MadedownUpdaterHelper"
 
 rm -rf "$APP_DIR" "$LEGACY_APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"

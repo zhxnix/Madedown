@@ -6,6 +6,15 @@ This project follows the basic structure of [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-10-18
+
+### Fixed
+
+- Preserve consecutive blank lines, leading blank lines, and trailing Returns in the rendered editor when switching tabs, changing editor modes, or reopening documents.
+- Preserve blank lines between list items and prevent repeated parsing from adding spacing around images and code blocks.
+- Keep the caret on the newly inserted ordered-list item so repeated Returns do not create duplicate numbering.
+- Includes the 1.3.1 empty ordered-list Return hang fix and the 1.3.2 in-app update fixes; installations still running 1.3.0 must upgrade to receive them.
+
 ## [1.3.2] - 2026-08-05
 
 ### Fixed

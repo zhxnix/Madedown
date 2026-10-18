@@ -223,7 +223,7 @@ enum MadedownUpdateLogic {
     }
 
     static let repository = "zhxnix/Madedown"
-    static let bundledVersionFallback = "1.3.2"
+    static let bundledVersionFallback = "1.3.3"
 
     static var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
